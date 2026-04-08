@@ -24,12 +24,27 @@ export interface IntakeSummary {
   sourceChannel: string
   senderName: string
   receivedAt: string
-  category: string | null
+  demandStatus: string
+  proposerName: string | null
   approvalCode: string | null
+  submittedTime: string | null
+  requirementType: string | null
+  developmentOwnerUserName: string | null
+  developmentBranchName: string | null
+  zentaoUrl: string | null
+  requirementDigest: string | null
+  department: string | null
   requirementName: string | null
+  requirementSummary: string | null
+  businessLine: string | null
+  remark: string | null
+  estimatedEffort: string | null
   plannedDueDate: string | null
+  actualEffort: string | null
+  actualCompletedTime: string | null
+  acceptanceTime: string | null
+  enrichmentStatus: string | null
   status: string
-  preview: string
   convertedWorkItemId: number | null
 }
 
@@ -51,7 +66,14 @@ export interface IntakeStructuredField {
 export interface IntakeStructuredData {
   category: string | null
   approvalTitle: string | null
+  proposerName: string | null
+  developmentOwnerUserName: string | null
   approvalCode: string | null
+  submittedTime: string | null
+  requirementType: string | null
+  developmentBranchName: string | null
+  zentaoUrl: string | null
+  requirementDigest: string | null
   requirementName: string | null
   requirementSummary: string | null
   department: string | null
@@ -59,6 +81,12 @@ export interface IntakeStructuredData {
   remark: string | null
   estimatedEffort: string | null
   plannedDueDate: string | null
+  developmentStartedDate: string | null
+  actualEffort: string | null
+  testingStartedDate: string | null
+  actualCompletedTime: string | null
+  acceptanceTime: string | null
+  releasedTime: string | null
   projectHint: string | null
   fields: IntakeStructuredField[]
 }
@@ -91,9 +119,14 @@ export interface IntakeDetail {
   externalMessageId: string | null
   senderName: string
   receivedAt: string
+  demandStatus: string
   rawContent: string
   structuredData: IntakeStructuredData | null
+  histories: IntakeHistory[]
   status: string
+  enrichmentStatus: string | null
+  enrichmentErrorSummary: string | null
+  enrichmentUpdatedAt: string | null
   aiDraft: IntakeAIDraft | null
   attachments: IntakeAttachment[]
   convertedWorkItemId: number | null
@@ -108,27 +141,27 @@ export interface IntakeCreateRequest {
   rawContent: string
 }
 
-export interface IntakeConvertRequest {
-  projectId: number | null
-  sprintId?: number | null
-  releaseId?: number | null
-  type: string
-  title: string
-  description?: string
-  priority: string
-  urgency?: string
-  ownerUserName: string
-  followerUserName: string
-  proposerName?: string
-  acceptanceCriteria?: string
-  plannedStartAt?: string
-  plannedEndAt?: string
+
+export interface IntakeStageActionRequest {
+  action: string
+  estimatedEffort?: string
+  plannedDueDate?: string
+  actualEffort?: string
+  actualCompletedTime?: string
+  acceptanceTime?: string
+  occurredAt?: string
+  developmentOwnerUserName?: string
 }
 
-export interface IntakeConvertResponse {
-  intakeRecord: IntakeDetail
-  workItem: WorkItemDetail
+export interface IntakeHistory {
+  id: number
+  actionType: string
+  actionSummary: string
+  detailText: string | null
+  operatorUserName: string
+  createdAt: string
 }
+
 
 export interface WorkItemFollowUp {
   id: number

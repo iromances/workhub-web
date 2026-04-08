@@ -9,10 +9,14 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 
-const activeMenu = computed(() => route.path)
+const activeMenu = computed(() => String(route.meta.activeMenu || route.path))
+const viewKey = computed(() => route.fullPath)
 
-function handleSelect(path: string) {
-  router.push(path)
+async function handleSelect(path: string) {
+  if (path === route.path) {
+    return
+  }
+  await router.push(path)
 }
 
 function logout() {
@@ -35,12 +39,12 @@ function logout() {
       <el-menu
         :default-active="activeMenu"
         class="menu-panel"
-        @select="handleSelect"
       >
         <el-menu-item
           v-for="item in menuItems"
           :key="item.key"
           :index="item.path"
+          @click="handleSelect(item.path)"
         >
           {{ item.label }}
         </el-menu-item>
@@ -49,11 +53,6 @@ function logout() {
 
     <el-container>
       <el-header class="layout-header">
-        <div>
-          <div class="header-title">{{ route.meta.title ?? 'WorkHub' }}</div>
-          <div class="header-subtitle">以项目归口，用待整理箱承接企微和人工录入</div>
-        </div>
-
         <div class="header-actions">
           <el-tag type="success" effect="dark">{{ authStore.userName || '未登录' }}</el-tag>
           <el-button type="primary" plain @click="logout">退出</el-button>
@@ -61,7 +60,9 @@ function logout() {
       </el-header>
 
       <el-main class="layout-main">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <component :is="Component" :key="viewKey" />
+        </router-view>
       </el-main>
     </el-container>
   </el-container>
@@ -132,24 +133,12 @@ function logout() {
 .layout-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  height: 84px;
-  padding: 0 28px;
+  justify-content: flex-end;
+  height: 56px;
+  padding: 0 20px;
   border-bottom: 1px solid rgba(15, 23, 42, 0.08);
   background: rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(20px);
-}
-
-.header-title {
-  font-size: 24px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.header-subtitle {
-  margin-top: 6px;
-  color: #64748b;
-  font-size: 13px;
 }
 
 .header-actions {

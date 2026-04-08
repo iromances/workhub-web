@@ -1,11 +1,5 @@
 import type { ApiResponse, PageResponse } from '@/types/http'
-import type {
-  IntakeConvertRequest,
-  IntakeConvertResponse,
-  IntakeCreateRequest,
-  IntakeDetail,
-  IntakeSummary,
-} from '@/types/work-item'
+import type { IntakeDetail, IntakeStageActionRequest, IntakeSummary } from '@/types/work-item'
 
 import http from './http'
 
@@ -13,23 +7,17 @@ export async function fetchIntakeRecords(params?: {
   status?: string
   sourceType?: string
   keyword?: string
-}): Promise<IntakeSummary[]> {
+  demandStatus?: string
+  enrichmentStatus?: string
+  page?: number
+  pageSize?: number
+}): Promise<PageResponse<IntakeSummary>> {
   const response = await http.get<ApiResponse<PageResponse<IntakeSummary>>>('/intake', { params })
-  return response.data.data.items
-}
-
-export async function fetchIntakeDetail(id: number): Promise<IntakeDetail> {
-  const response = await http.get<ApiResponse<IntakeDetail>>(`/intake/${id}`)
   return response.data.data
 }
 
-export async function createManualIntake(request: IntakeCreateRequest): Promise<IntakeDetail> {
-  const response = await http.post<ApiResponse<IntakeDetail>>('/intake/manual', request)
-  return response.data.data
-}
-
-export async function createPastedIntake(request: IntakeCreateRequest): Promise<IntakeDetail> {
-  const response = await http.post<ApiResponse<IntakeDetail>>('/intake/paste', request)
+export async function fetchIntakeDetail(id: number, recordView = true): Promise<IntakeDetail> {
+  const response = await http.get<ApiResponse<IntakeDetail>>(`/intake/${id}`, { params: { recordView } })
   return response.data.data
 }
 
@@ -40,15 +28,17 @@ export async function createUploadIntake(formData: FormData): Promise<IntakeDeta
   return response.data.data
 }
 
-export async function generateIntakeAiDraft(id: number, provider?: string): Promise<IntakeDetail> {
-  const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/ai-draft`, null, {
-    params: provider ? { provider } : undefined,
-  })
+
+export async function advanceIntakeStage(id: number, request: IntakeStageActionRequest | FormData): Promise<IntakeDetail> {
+  const isFormData = typeof FormData !== 'undefined' && request instanceof FormData
+  const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/stage-actions`, request, isFormData ? {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  } : undefined)
   return response.data.data
 }
 
-export async function convertIntakeToWorkItem(id: number, request: IntakeConvertRequest): Promise<IntakeConvertResponse> {
-  const response = await http.post<ApiResponse<IntakeConvertResponse>>(`/intake/${id}/convert`, request)
+export async function updateIntakeZentaoLink(id: number, zentaoUrl: string): Promise<IntakeDetail> {
+  const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/zentao-link`, { zentaoUrl })
   return response.data.data
 }
 
