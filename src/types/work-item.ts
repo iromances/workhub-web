@@ -43,6 +43,7 @@ export interface IntakeSummary {
   actualEffort: string | null
   actualCompletedTime: string | null
   acceptanceTime: string | null
+  releasedTime: string | null
   enrichmentStatus: string | null
   status: string
   convertedWorkItemId: number | null

@@ -681,6 +681,11 @@ onMounted(loadBaseData)
           {{ row.acceptanceTime || '-' }}
         </template>
       </el-table-column>
+      <el-table-column label="上线日期" width="160">
+        <template #default="{ row }">
+          {{ row.releasedTime || '-' }}
+        </template>
+      </el-table-column>
       <el-table-column prop="remark" label="需求备注" min-width="220" show-overflow-tooltip />
       <el-table-column label="操作" width="320" fixed="right">
         <template #default="{ row }">
