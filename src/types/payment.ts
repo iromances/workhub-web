@@ -34,6 +34,7 @@ export interface PaymentMerchantSummary {
   merchantName: string
   environment: string
   appId: string | null
+  purposeCodes: string[]
   status: string
 }
 
@@ -63,6 +64,29 @@ export interface PaymentSecretSummary {
   createdAt: string
 }
 
+export interface PaymentMerchantCredential {
+  id: number
+  credentialKey: string
+  credentialName: string
+  credentialType: string
+  maskedValue: string
+  fingerprint: string
+  status: string
+  remark: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PaymentMerchantCredentialSaveRequest {
+  credentialKey?: string
+  credentialName: string
+  credentialType: string
+  credentialValue: string
+  status: string
+  plainStorage?: boolean
+  remark?: string
+}
+
 export interface PaymentMerchantDetail {
   id: number
   channelId: number
@@ -75,8 +99,10 @@ export interface PaymentMerchantDetail {
   settlementSubject: string | null
   status: string
   remark: string | null
+  purposeCodes: string[]
   parameters: PaymentMerchantParam[]
   secrets: PaymentSecretSummary[]
+  credentials: PaymentMerchantCredential[]
   createdAt: string
   updatedAt: string
 }
@@ -89,6 +115,7 @@ export interface PaymentMerchantSaveRequest {
   status: string
   appId?: string
   settlementSubject?: string
+  purposeCodes?: string[]
   remark?: string
 }
 
@@ -110,15 +137,50 @@ export interface PaymentSecretSaveRequest {
   remark?: string
 }
 
+export interface PaymentSecretFileUploadRequest {
+  secretName: string
+  secretType: string
+  fileValueType: 'TEXT' | 'BINARY'
+  file: File
+  activateNow?: boolean
+  validFrom?: string
+  validTo?: string
+  remark?: string
+}
+
 export interface PaymentPurposeOption {
   code: string
   name: string
   description: string
 }
 
+export interface PaymentBindingRelation {
+  id: number
+  bindingId: number
+  merchantId: number
+  merchantCode: string
+  merchantName: string
+  relationRole: string
+  relationName: string | null
+  priority: number
+  remark: string | null
+}
+
+export interface PaymentBindingRelationSaveRequest {
+  merchantId: number
+  relationRole: string
+  relationName?: string
+  priority?: number
+  remark?: string
+}
+
 export interface PaymentProjectBinding {
   id: number
   projectId: number
+  businessLineCode: string
+  businessLineName: string
+  businessLine: string
+  projectGroup: string
   projectCode: string
   projectName: string
   merchantId: number
@@ -129,10 +191,12 @@ export interface PaymentProjectBinding {
   channelName: string
   environment: string
   purposeCode: string
+  purposeCodes: string[]
   priority: number
   defaultBinding: boolean
   status: string
   remark: string | null
+  relations: PaymentBindingRelation[]
   createdAt: string
   updatedAt: string
 }
@@ -141,8 +205,10 @@ export interface PaymentProjectBindingSaveRequest {
   projectId: number
   merchantId: number
   purposeCode: string
+  purposeCodes?: string[]
   priority: number
   defaultBinding?: boolean
   status: string
   remark?: string
+  relations?: PaymentBindingRelationSaveRequest[]
 }

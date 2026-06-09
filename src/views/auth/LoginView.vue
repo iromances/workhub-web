@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useAuthStore } from '@/stores/auth'
@@ -13,6 +13,9 @@ const form = reactive({
 })
 
 async function submit() {
+  if (loading.value) {
+    return
+  }
   loading.value = true
   try {
     await authStore.signIn(form)
@@ -21,6 +24,22 @@ async function submit() {
     loading.value = false
   }
 }
+
+function handlePageKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter') {
+    return
+  }
+  event.preventDefault()
+  void submit()
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handlePageKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handlePageKeydown)
+})
 </script>
 
 <template>
@@ -42,7 +61,7 @@ async function submit() {
             placeholder="请输入密码"
           />
         </el-form-item>
-        <el-button type="primary" :loading="loading" class="login-button" @click="submit">
+        <el-button type="primary" native-type="submit" :loading="loading" class="login-button">
           登录
         </el-button>
       </el-form>

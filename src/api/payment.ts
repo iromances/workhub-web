@@ -4,6 +4,8 @@ import type {
   PaymentChannelSaveRequest,
   PaymentChannelSummary,
   PaymentMerchantDetail,
+  PaymentMerchantCredential,
+  PaymentMerchantCredentialSaveRequest,
   PaymentMerchantParam,
   PaymentMerchantParamSaveRequest,
   PaymentMerchantSaveRequest,
@@ -11,6 +13,7 @@ import type {
   PaymentProjectBinding,
   PaymentProjectBindingSaveRequest,
   PaymentPurposeOption,
+  PaymentSecretFileUploadRequest,
   PaymentSecretSaveRequest,
   PaymentSecretSummary,
 } from '@/types/payment'
@@ -18,11 +21,13 @@ import type {
 import http from './http'
 
 export async function fetchPaymentChannels(params?: {
+  channelId?: number
   status?: string
-  keyword?: string
-}): Promise<PaymentChannelSummary[]> {
+  page?: number
+  pageSize?: number
+}): Promise<PageResponse<PaymentChannelSummary>> {
   const response = await http.get<ApiResponse<PageResponse<PaymentChannelSummary>>>('/payment/channels', { params })
-  return response.data.data.items
+  return response.data.data
 }
 
 export async function fetchPaymentChannelDetail(id: number): Promise<PaymentChannelDetail> {
@@ -46,9 +51,11 @@ export async function fetchPaymentMerchants(params?: {
   projectId?: number
   purposeCode?: string
   keyword?: string
-}): Promise<PaymentMerchantSummary[]> {
+  page?: number
+  pageSize?: number
+}): Promise<PageResponse<PaymentMerchantSummary>> {
   const response = await http.get<ApiResponse<PageResponse<PaymentMerchantSummary>>>('/payment/merchants', { params })
-  return response.data.data.items
+  return response.data.data
 }
 
 export async function fetchPaymentMerchantDetail(id: number): Promise<PaymentMerchantDetail> {
@@ -79,6 +86,22 @@ export async function updatePaymentMerchantParam(merchantId: number,
   return response.data.data
 }
 
+export async function savePaymentMerchantCredential(merchantId: number,
+                                                    request: PaymentMerchantCredentialSaveRequest): Promise<PaymentMerchantCredential[]> {
+  const response = await http.post<ApiResponse<PaymentMerchantCredential[]>>(`/payment/merchants/${merchantId}/credentials`, request)
+  return response.data.data
+}
+
+export async function updatePaymentMerchantCredential(merchantId: number,
+                                                      credentialId: number,
+                                                      request: PaymentMerchantCredentialSaveRequest): Promise<PaymentMerchantCredential[]> {
+  const response = await http.put<ApiResponse<PaymentMerchantCredential[]>>(
+    `/payment/merchants/${merchantId}/credentials/${credentialId}`,
+    request,
+  )
+  return response.data.data
+}
+
 export async function fetchPaymentMerchantSecrets(merchantId: number): Promise<PaymentSecretSummary[]> {
   const response = await http.get<ApiResponse<PaymentSecretSummary[]>>(`/payment/merchants/${merchantId}/secrets`)
   return response.data.data
@@ -90,28 +113,78 @@ export async function createPaymentMerchantSecret(merchantId: number,
   return response.data.data
 }
 
+export async function createPaymentMerchantSecretFromFile(merchantId: number,
+                                                          request: PaymentSecretFileUploadRequest): Promise<PaymentSecretSummary[]> {
+  const formData = new FormData()
+  formData.append('secretName', request.secretName)
+  formData.append('secretType', request.secretType)
+  formData.append('fileValueType', request.fileValueType)
+  formData.append('file', request.file)
+  formData.append('activateNow', String(request.activateNow ?? true))
+  if (request.validFrom) {
+    formData.append('validFrom', request.validFrom)
+  }
+  if (request.validTo) {
+    formData.append('validTo', request.validTo)
+  }
+  if (request.remark) {
+    formData.append('remark', request.remark)
+  }
+  const response = await http.post<ApiResponse<PaymentSecretSummary[]>>(
+    `/payment/merchants/${merchantId}/secrets/file`,
+    formData,
+  )
+  return response.data.data
+}
+
 export async function fetchPaymentBindings(params?: {
   projectId?: number
+  projectGroup?: string
+  businessLine?: string
   merchantId?: number
   purposeCode?: string
   status?: string
-}): Promise<PaymentProjectBinding[]> {
-  const response = await http.get<ApiResponse<PageResponse<PaymentProjectBinding>>>('/payment/bindings', { params })
-  return response.data.data.items
+  page?: number
+  pageSize?: number
+}): Promise<PageResponse<PaymentProjectBinding>> {
+  const response = await http.get<ApiResponse<PageResponse<PaymentProjectBinding>>>('/payment/bindings', {
+    params: {
+      ...params,
+      businessLine: params?.businessLine || params?.projectGroup,
+      projectGroup: undefined,
+    },
+  })
+  return {
+    ...response.data.data,
+    items: response.data.data.items.map(normalizePaymentBinding),
+  }
 }
 
 export async function createPaymentBinding(request: PaymentProjectBindingSaveRequest): Promise<PaymentProjectBinding> {
   const response = await http.post<ApiResponse<PaymentProjectBinding>>('/payment/bindings', request)
-  return response.data.data
+  return normalizePaymentBinding(response.data.data)
 }
 
 export async function updatePaymentBinding(id: number,
                                            request: PaymentProjectBindingSaveRequest): Promise<PaymentProjectBinding> {
   const response = await http.put<ApiResponse<PaymentProjectBinding>>(`/payment/bindings/${id}`, request)
-  return response.data.data
+  return normalizePaymentBinding(response.data.data)
 }
 
 export async function fetchPaymentPurposes(): Promise<PaymentPurposeOption[]> {
   const response = await http.get<ApiResponse<PaymentPurposeOption[]>>('/payment/purposes')
   return response.data.data
+}
+
+function normalizePaymentBinding<T extends Partial<PaymentProjectBinding>>(binding: T): T & PaymentProjectBinding {
+  const businessLine = (binding as { businessLine?: string; projectGroup?: string }).businessLine
+    || (binding as { projectGroup?: string }).projectGroup
+    || ''
+  return {
+    ...binding,
+    businessLine,
+    businessLineCode: (binding as { businessLineCode?: string }).businessLineCode || businessLine,
+    businessLineName: (binding as { businessLineName?: string }).businessLineName || businessLine,
+    projectGroup: businessLine,
+  } as T & PaymentProjectBinding
 }
