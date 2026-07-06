@@ -104,6 +104,22 @@ export interface XxlJobDashboard {
   failedJobs: XxlJobFailedJob[]
 }
 
+export interface XxlJobLogPage {
+  id: number
+  monitorKey: string
+  businessLineCode: string
+  environmentCode: string
+  name: string
+  xxlJobDatabaseName: string
+  status: string
+  message: string
+  checkedAt: string
+  total: number
+  page: number
+  pageSize: number
+  logs: XxlJobFailedJob[]
+}
+
 export interface SystemAlertSubsystem {
   id: number
   businessLineCode: string

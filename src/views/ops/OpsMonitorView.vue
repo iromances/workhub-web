@@ -1,44 +1,31 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 
 import {
   createOpsMonitor,
   deleteOpsMonitor,
-  fetchXxlJobDetail,
-  fetchXxlJobExecutors,
+  fetchXxlJobLogs,
   fetchOpsMonitors,
-  fetchXxlJobDashboard,
   updateOpsMonitor,
 } from '@/api/ops'
 import { fetchProjectGroups } from '@/api/project'
-import type { OpsMonitor, OpsMonitorSaveRequest, XxlJobDashboard, XxlJobExecutor, XxlJobFailedJob } from '@/types/ops'
+import { useAuthStore } from '@/stores/auth'
+import type { OpsMonitor, OpsMonitorSaveRequest, XxlJobLogPage } from '@/types/ops'
 import type { ProjectGroup } from '@/types/work-item'
 
+const authStore = useAuthStore()
 const loading = ref(false)
 const submitting = ref(false)
-const detailLoadingId = ref<number | null>(null)
-const detailQuerying = ref(false)
-const executorLoading = ref(false)
+const detailLoading = ref(false)
 const drawerVisible = ref(false)
 const detailVisible = ref(false)
-const detailMonitorId = ref<number | null>(null)
 const editingId = ref<number | null>(null)
 const activeTab = ref<'XXL_JOB' | 'MQ'>('XXL_JOB')
 const monitors = ref<OpsMonitor[]>([])
-const dashboards = ref<XxlJobDashboard[]>([])
 const businessLines = ref<ProjectGroup[]>([])
-const executorOptions = ref<XxlJobExecutor[]>([])
-const selectedExecutorAppNames = ref<string[]>([])
-const selectedDetail = ref<XxlJobDashboard | null>(null)
-const detailDateRange = ref<[string, string] | null>(defaultDetailDateRange())
-const detailPage = ref(1)
-const detailPageSize = ref(20)
-const detailFilters = reactive({
-  author: '',
-  executorAppName: '',
-  logStatus: 'ALL' as 'ALL' | 'FAILED',
-})
+const selectedMonitor = ref<OpsMonitor | null>(null)
+const logPage = ref<XxlJobLogPage | null>(null)
 
 const environmentOptions = [
   { label: '开发', value: 'dev' },
@@ -62,32 +49,20 @@ const form = reactive<OpsMonitorSaveRequest>({
   remark: '',
 })
 
-const businessLineOptions = computed(() => businessLines.value.filter((item) => item.enabled))
-const monitorMap = computed(() => new Map(monitors.value.map((item) => [item.id, item])))
-const executorSelectOptions = computed(() => {
-  const options = new Map(executorOptions.value.map((item) => [item.appName, item]))
-  selectedExecutorAppNames.value.forEach((appName) => {
-    if (!options.has(appName)) {
-      options.set(appName, { appName, title: appName })
-    }
-  })
-  return Array.from(options.values())
+const logFilters = reactive({
+  dateRange: [] as string[],
+  author: '',
+  executorAppName: '',
+  logStatus: 'ALL' as 'ALL' | 'FAILED',
+  page: 1,
+  pageSize: 20,
 })
-let executorLoadSeq = 0
 
-function formatDate(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function defaultDetailDateRange(): [string, string] {
-  const endDate = new Date()
-  const startDate = new Date()
-  startDate.setMonth(startDate.getMonth() - 1)
-  return [formatDate(startDate), formatDate(endDate)]
-}
+const businessLineOptions = computed(() => businessLines.value.filter((item) => item.enabled))
+const executionLogs = computed(() => logPage.value?.logs || [])
+const canCreate = computed(() => authStore.hasAnyPermission(['ops:monitor:create', 'ops:monitor:manage']))
+const canUpdate = computed(() => authStore.hasAnyPermission(['ops:monitor:update', 'ops:monitor:manage']))
+const canDelete = computed(() => authStore.hasAnyPermission(['ops:monitor:delete', 'ops:monitor:manage']))
 
 async function loadBusinessLines() {
   try {
@@ -111,13 +86,8 @@ async function loadDashboard() {
   loading.value = true
   try {
     await loadMonitors()
-    dashboards.value = await fetchXxlJobDashboard({
-      businessLineCode: filters.businessLineCode || undefined,
-      environmentCode: filters.environmentCode || undefined,
-      enabledOnly: filters.enabledOnly,
-    })
   } catch (error) {
-    ElMessage.error('加载 XXL-JOB 统计失败')
+    ElMessage.error('加载 XXL-JOB 监测配置失败')
     console.error(error)
   } finally {
     loading.value = false
@@ -136,8 +106,6 @@ function resetForm() {
   form.password = undefined
   form.xxlJobDatabaseName = ''
   form.executorAppName = undefined
-  selectedExecutorAppNames.value = []
-  executorOptions.value = []
   form.jobHandler = undefined
   form.jobDesc = undefined
   form.enabled = true
@@ -149,21 +117,18 @@ function openCreate() {
   drawerVisible.value = true
 }
 
-function openEdit(row: XxlJobDashboard) {
-  const monitor = monitorMap.value.get(row.id)
+function openEdit(row: OpsMonitor) {
   editingId.value = row.id
   form.monitorType = 'XXL_JOB'
-  form.monitorKey = monitor?.monitorKey
+  form.monitorKey = row.monitorKey
   form.businessLineCode = row.businessLineCode
   form.environmentCode = row.environmentCode
-  form.name = monitor?.name
-  form.xxlJobDatabaseName = monitor?.xxlJobDatabaseName || row.xxlJobDatabaseName || ''
-  form.executorAppName = monitor?.executorAppName || undefined
-  selectedExecutorAppNames.value = splitExecutorAppNames(form.executorAppName)
-  form.enabled = monitor?.enabled ?? true
-  form.remark = monitor?.remark || ''
+  form.name = row.name
+  form.xxlJobDatabaseName = row.xxlJobDatabaseName || ''
+  form.executorAppName = row.executorAppName || undefined
+  form.enabled = row.enabled
+  form.remark = row.remark || ''
   drawerVisible.value = true
-  void loadExecutorOptions()
 }
 
 function validateForm() {
@@ -186,62 +151,11 @@ function requestFromForm(): OpsMonitorSaveRequest {
     environmentCode: form.environmentCode.trim(),
     name: form.name,
     xxlJobDatabaseName: form.xxlJobDatabaseName?.trim(),
-    executorAppName: selectedExecutorAppNames.value.join(',') || undefined,
+    executorAppName: form.executorAppName?.trim() || undefined,
     enabled: form.enabled,
     remark: form.remark?.trim() || undefined,
   }
 }
-
-function splitExecutorAppNames(value?: string | null) {
-  return Array.from(
-    new Set(
-      (value || '')
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean),
-    ),
-  )
-}
-
-async function loadExecutorOptions() {
-  const businessLineCode = form.businessLineCode?.trim()
-  const environmentCode = form.environmentCode?.trim()
-  const xxlJobDatabaseName = form.xxlJobDatabaseName?.trim()
-  if (!drawerVisible.value || !businessLineCode || !environmentCode || !xxlJobDatabaseName) {
-    executorOptions.value = []
-    return
-  }
-  const seq = ++executorLoadSeq
-  executorLoading.value = true
-  try {
-    const items = await fetchXxlJobExecutors({ businessLineCode, environmentCode, xxlJobDatabaseName })
-    if (seq === executorLoadSeq) {
-      executorOptions.value = items
-    }
-  } catch (error) {
-    if (seq === executorLoadSeq) {
-      executorOptions.value = []
-      ElMessage.warning('加载执行器列表失败')
-    }
-    console.error(error)
-  } finally {
-    if (seq === executorLoadSeq) {
-      executorLoading.value = false
-    }
-  }
-}
-
-function handleExecutorSourceChange() {
-  selectedExecutorAppNames.value = []
-  void loadExecutorOptions()
-}
-
-watch(
-  () => [drawerVisible.value, form.businessLineCode, form.environmentCode, form.xxlJobDatabaseName] as const,
-  () => {
-    void loadExecutorOptions()
-  },
-)
 
 async function submit() {
   if (!validateForm()) {
@@ -266,7 +180,7 @@ async function submit() {
   }
 }
 
-async function remove(row: XxlJobDashboard) {
+async function remove(row: OpsMonitor) {
   try {
     await ElMessageBox.confirm(`确认删除 ${row.name}？`, '删除监测配置', { type: 'warning' })
     await deleteOpsMonitor(row.id)
@@ -280,65 +194,71 @@ async function remove(row: XxlJobDashboard) {
   }
 }
 
-async function openDetail(row: XxlJobDashboard) {
-  detailMonitorId.value = row.id
-  detailDateRange.value = defaultDetailDateRange()
-  detailPage.value = 1
-  detailPageSize.value = 20
-  detailFilters.author = ''
-  detailFilters.executorAppName = ''
-  detailFilters.logStatus = 'ALL'
-  await loadDetail()
+function formatDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
-async function queryDetailFromFirstPage() {
-  detailPage.value = 1
-  await loadDetail()
+function resetLogFilters() {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(end.getDate() - 7)
+  logFilters.dateRange = [formatDate(start), formatDate(end)]
+  logFilters.author = ''
+  logFilters.executorAppName = ''
+  logFilters.logStatus = 'ALL'
+  logFilters.page = 1
+  logFilters.pageSize = 20
 }
 
-async function loadDetail() {
-  if (!detailMonitorId.value) {
+async function openDetail(row: OpsMonitor) {
+  selectedMonitor.value = row
+  logPage.value = null
+  resetLogFilters()
+  detailVisible.value = true
+  await loadLogs()
+}
+
+async function loadLogs() {
+  if (!selectedMonitor.value) {
     return
   }
-  const [startDate, endDate] = detailDateRange.value || []
-  if (!startDate || !endDate) {
-    ElMessage.warning('请选择日期区间')
-    return
-  }
-  detailLoadingId.value = detailMonitorId.value
-  detailQuerying.value = true
+  detailLoading.value = true
   try {
-    const detail = await fetchXxlJobDetail(detailMonitorId.value, {
+    const [startDate, endDate] = logFilters.dateRange
+    logPage.value = await fetchXxlJobLogs(selectedMonitor.value.id, {
       startDate,
       endDate,
-      page: detailPage.value,
-      pageSize: detailPageSize.value,
-      author: detailFilters.author.trim() || undefined,
-      executorAppName: detailFilters.executorAppName.trim() || undefined,
-      logStatus: detailFilters.logStatus,
+      page: logFilters.page,
+      pageSize: logFilters.pageSize,
+      author: logFilters.author.trim() || undefined,
+      executorAppName: logFilters.executorAppName.trim() || undefined,
+      logStatus: logFilters.logStatus,
     })
-    selectedDetail.value = detail
-    detailPage.value = detail.failedJobPage || detailPage.value
-    detailPageSize.value = detail.failedJobPageSize || detailPageSize.value
-    detailVisible.value = true
   } catch (error) {
-    ElMessage.error('加载详情失败')
+    ElMessage.error('加载 XXL-JOB 执行日志失败')
     console.error(error)
   } finally {
-    detailLoadingId.value = null
-    detailQuerying.value = false
+    detailLoading.value = false
   }
 }
 
-async function handleDetailPageChange(page: number) {
-  detailPage.value = page
-  await loadDetail()
+async function searchLogs() {
+  logFilters.page = 1
+  await loadLogs()
 }
 
-async function handleDetailPageSizeChange(pageSize: number) {
-  detailPageSize.value = pageSize
-  detailPage.value = 1
-  await loadDetail()
+async function handleLogPageChange(page: number) {
+  logFilters.page = page
+  await loadLogs()
+}
+
+async function handleLogPageSizeChange(pageSize: number) {
+  logFilters.pageSize = pageSize
+  logFilters.page = 1
+  await loadLogs()
 }
 
 function statusTag(status: string | null) {
@@ -354,18 +274,27 @@ function statusTag(status: string | null) {
   return 'info'
 }
 
-function failureTagType(failureType: string) {
-  if (failureType === 'SUCCESS') {
+function alertType(status: string | null) {
+  if (status === 'UP') {
     return 'success'
   }
-  if (failureType === 'RUNNING' || failureType === 'SCHEDULE_FAILED') {
+  if (status === 'WARN') {
+    return 'warning'
+  }
+  if (status === 'ERROR') {
+    return 'error'
+  }
+  return 'info'
+}
+
+function executionStatusTag(status: string) {
+  if (status === 'SUCCESS') {
+    return 'success'
+  }
+  if (status === 'RUNNING') {
     return 'warning'
   }
   return 'danger'
-}
-
-function failureMessage(row: XxlJobFailedJob) {
-  return row.failureType === 'SCHEDULE_FAILED' ? row.triggerMsg || row.handleMsg : row.handleMsg || row.triggerMsg
 }
 
 onMounted(async () => {
@@ -378,11 +307,11 @@ onMounted(async () => {
     <div class="page-header">
       <div>
         <h1 class="page-title">业务监测</h1>
-        <p class="page-desc">按业务线读取对应 DBServer 上的 XXL-JOB 数据库，默认展示 XXL-JOB 运行报表快照，详情中定位失败 Job。</p>
+        <p class="page-desc">维护本地 XXL-JOB 监测配置，首页不采集远端调度库统计。</p>
       </div>
       <div class="header-buttons">
-        <el-button @click="loadDashboard">刷新统计</el-button>
-        <el-button v-if="activeTab === 'XXL_JOB'" type="primary" @click="openCreate">新增 XXL-JOB 监测</el-button>
+        <el-button @click="loadDashboard">刷新配置</el-button>
+        <el-button v-if="activeTab === 'XXL_JOB' && canCreate" type="primary" @click="openCreate">新增 XXL-JOB 监测</el-button>
       </div>
     </div>
 
@@ -395,7 +324,7 @@ onMounted(async () => {
                 v-for="line in businessLineOptions"
                 :key="line.id"
                 :label="line.businessLineName"
-                :value="line.businessLineName"
+                :value="line.businessLineCode"
               />
             </el-select>
           </el-form-item>
@@ -412,38 +341,37 @@ onMounted(async () => {
           </el-form-item>
         </el-form>
 
-        <el-table v-loading="loading" :data="dashboards" row-key="id">
+        <el-table v-loading="loading" :data="monitors" row-key="id">
           <el-table-column prop="businessLineCode" label="业务线" width="140" />
           <el-table-column label="环境" width="90">
             <template #default="{ row }">
               {{ environmentOptions.find((item) => item.value === row.environmentCode)?.label || row.environmentCode }}
             </template>
           </el-table-column>
+          <el-table-column prop="name" label="监测名称" min-width="160" show-overflow-tooltip />
+          <el-table-column prop="monitorKey" label="监测 Key" min-width="180" show-overflow-tooltip />
           <el-table-column prop="xxlJobDatabaseName" label="XXL-JOB 库" min-width="150" show-overflow-tooltip />
-          <el-table-column label="运行状态" width="110">
+          <el-table-column prop="executorAppName" label="关注执行器" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.executorAppName || '全部' }}</template>
+          </el-table-column>
+          <el-table-column label="启用" width="80">
             <template #default="{ row }">
-              <el-tag :type="statusTag(row.status)">{{ row.status }}</el-tag>
+              <el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="executorCount" label="执行器" width="90" />
-          <el-table-column prop="jobCount" label="任务总数" width="100" />
-          <el-table-column prop="enabledJobCount" label="启用" width="80" />
-          <el-table-column prop="disabledJobCount" label="停用" width="80" />
-          <el-table-column prop="triggerCount" label="调度次数" width="110" />
-          <el-table-column prop="triggerSuccessCount" label="成功" width="90" />
-          <el-table-column label="失败" width="90">
+          <el-table-column label="上次状态" width="110">
             <template #default="{ row }">
-              <el-tag :type="row.triggerFailedCount > 0 ? 'danger' : 'success'">{{ row.triggerFailedCount }}</el-tag>
+              <el-tag :type="statusTag(row.lastStatus)">{{ row.lastStatus || '未采集' }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="triggerRunningCount" label="进行中" width="90" />
-          <el-table-column prop="message" label="消息" min-width="220" show-overflow-tooltip />
-          <el-table-column prop="reportUpdatedAt" label="报表更新时间" width="180" />
-          <el-table-column label="操作" width="190" fixed="right">
+          <el-table-column prop="lastMessage" label="上次消息" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="lastCheckedAt" label="上次采集时间" width="180" />
+          <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
+          <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
-              <el-button link type="primary" :loading="detailLoadingId === row.id" @click="openDetail(row)">详情</el-button>
-              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-button link type="danger" @click="remove(row)">删除</el-button>
+              <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+              <el-button v-if="canUpdate" link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="canDelete" link type="danger" @click="remove(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -462,42 +390,25 @@ onMounted(async () => {
   <el-drawer v-model="drawerVisible" :title="editingId ? '编辑 XXL-JOB 监测' : '新增 XXL-JOB 监测'" size="520px">
     <el-form label-position="top" class="drawer-form">
       <el-form-item label="业务线" required>
-        <el-select v-model="form.businessLineCode" filterable style="width: 100%" @change="handleExecutorSourceChange">
+        <el-select v-model="form.businessLineCode" filterable style="width: 100%">
           <el-option
             v-for="line in businessLineOptions"
             :key="line.id"
             :label="line.businessLineName"
-            :value="line.businessLineName"
+            :value="line.businessLineCode"
           />
         </el-select>
       </el-form-item>
       <el-form-item label="环境" required>
-        <el-select v-model="form.environmentCode" style="width: 100%" @change="handleExecutorSourceChange">
+        <el-select v-model="form.environmentCode" style="width: 100%">
           <el-option v-for="item in environmentOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>
       <el-form-item label="XXL-JOB 数据库名" required>
-        <el-input v-model="form.xxlJobDatabaseName" placeholder="amp_xxl_job" @change="handleExecutorSourceChange" />
+        <el-input v-model="form.xxlJobDatabaseName" placeholder="amp_xxl_job" />
       </el-form-item>
       <el-form-item label="关注执行器">
-        <el-select
-          v-model="selectedExecutorAppNames"
-          multiple
-          filterable
-          clearable
-          collapse-tags
-          collapse-tags-tooltip
-          :loading="executorLoading"
-          placeholder="不选默认关注全部执行器"
-          style="width: 100%"
-        >
-          <el-option
-            v-for="item in executorSelectOptions"
-            :key="item.appName"
-            :label="item.title && item.title !== item.appName ? `${item.appName} / ${item.title}` : item.appName"
-            :value="item.appName"
-          />
-        </el-select>
+        <el-input v-model="form.executorAppName" placeholder="多个执行器用英文逗号分隔，留空表示全部" />
       </el-form-item>
       <el-form-item label="是否启用">
         <el-switch v-model="form.enabled" />
@@ -513,82 +424,98 @@ onMounted(async () => {
     </template>
   </el-drawer>
 
-  <el-dialog v-model="detailVisible" title="XXL-JOB 详情" width="980px">
-    <div class="detail-toolbar">
-      <el-date-picker
-        v-model="detailDateRange"
-        type="daterange"
-        value-format="YYYY-MM-DD"
-        range-separator="至"
-        start-placeholder="开始日期"
-        end-placeholder="结束日期"
-      />
-      <el-input v-model="detailFilters.author" clearable placeholder="负责人" style="width: 140px" @keyup.enter="queryDetailFromFirstPage" />
-      <el-input v-model="detailFilters.executorAppName" clearable placeholder="执行器" style="width: 180px" @keyup.enter="queryDetailFromFirstPage" />
-      <el-select v-model="detailFilters.logStatus" style="width: 120px" @change="queryDetailFromFirstPage">
-        <el-option label="全部日志" value="ALL" />
-        <el-option label="失败日志" value="FAILED" />
-      </el-select>
-      <el-button type="primary" :loading="detailQuerying" @click="queryDetailFromFirstPage">查询</el-button>
+  <el-dialog v-model="detailVisible" title="XXL-JOB 执行日志" width="1120px" class="job-log-dialog">
+    <div v-if="selectedMonitor" class="detail-summary">
+      <div>
+        <span class="summary-label">业务线</span>
+        <strong>{{ selectedMonitor.businessLineCode }}</strong>
+      </div>
+      <div>
+        <span class="summary-label">环境</span>
+        <strong>{{ environmentOptions.find((item) => item.value === selectedMonitor?.environmentCode)?.label || selectedMonitor.environmentCode }}</strong>
+      </div>
+      <div>
+        <span class="summary-label">XXL-JOB 库</span>
+        <strong>{{ selectedMonitor.xxlJobDatabaseName }}</strong>
+      </div>
+      <div>
+        <span class="summary-label">配置执行器</span>
+        <strong>{{ selectedMonitor.executorAppName || '全部' }}</strong>
+      </div>
     </div>
-    <el-descriptions v-if="selectedDetail" :column="3" border>
-      <el-descriptions-item label="状态">
-        <el-tag :type="statusTag(selectedDetail.status)">{{ selectedDetail.status }}</el-tag>
-      </el-descriptions-item>
-      <el-descriptions-item label="业务线">{{ selectedDetail.businessLineCode }}</el-descriptions-item>
-      <el-descriptions-item label="环境">
-        {{ environmentOptions.find((item) => item.value === selectedDetail?.environmentCode)?.label || selectedDetail.environmentCode }}
-      </el-descriptions-item>
-      <el-descriptions-item label="XXL-JOB 库">{{ selectedDetail.xxlJobDatabaseName }}</el-descriptions-item>
-      <el-descriptions-item label="报表更新时间">{{ selectedDetail.reportUpdatedAt || '-' }}</el-descriptions-item>
-      <el-descriptions-item label="详情查询时间">{{ selectedDetail.checkedAt }}</el-descriptions-item>
-      <el-descriptions-item label="任务数量">{{ selectedDetail.jobCount }}</el-descriptions-item>
-      <el-descriptions-item label="执行器数量">{{ selectedDetail.executorCount }}</el-descriptions-item>
-      <el-descriptions-item label="调度次数">{{ selectedDetail.triggerCount }}</el-descriptions-item>
-      <el-descriptions-item label="成功 / 失败 / 进行中">
-        {{ selectedDetail.triggerSuccessCount }} / {{ selectedDetail.triggerFailedCount }} / {{ selectedDetail.triggerRunningCount }}
-      </el-descriptions-item>
-      <el-descriptions-item label="消息" :span="3">{{ selectedDetail.message }}</el-descriptions-item>
-    </el-descriptions>
-    <el-table
-      class="detail-table"
-      :data="selectedDetail?.failedJobs || []"
-      size="small"
-      empty-text="当前日期区间暂无失败 Job"
-    >
-      <el-table-column prop="executorAppName" label="执行器" min-width="150" show-overflow-tooltip />
-      <el-table-column prop="jobId" label="Job ID" width="90" />
-      <el-table-column prop="jobDesc" label="任务描述" min-width="150" show-overflow-tooltip />
+
+    <el-form inline class="log-filter-form" @submit.prevent="searchLogs">
+      <el-form-item label="执行日期">
+        <el-date-picker
+          v-model="logFilters.dateRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          range-separator="至"
+          style="width: 260px"
+        />
+      </el-form-item>
+      <el-form-item label="状态">
+        <el-select v-model="logFilters.logStatus" style="width: 110px">
+          <el-option label="全部" value="ALL" />
+          <el-option label="失败" value="FAILED" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="负责人">
+        <el-input v-model="logFilters.author" clearable placeholder="author" style="width: 130px" />
+      </el-form-item>
+      <el-form-item label="执行器">
+        <el-input v-model="logFilters.executorAppName" clearable placeholder="appName" style="width: 150px" />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" :loading="detailLoading" @click="searchLogs">查询</el-button>
+        <el-button :loading="detailLoading" @click="loadLogs">刷新</el-button>
+      </el-form-item>
+    </el-form>
+
+    <el-alert
+      v-if="logPage?.message"
+      :title="logPage.message"
+      :type="alertType(logPage.status)"
+      show-icon
+      :closable="false"
+      class="log-alert"
+    />
+
+    <el-table v-loading="detailLoading" :data="executionLogs" row-key="logId" max-height="520" empty-text="暂无执行日志">
+      <el-table-column prop="logId" label="日志ID" width="90" />
+      <el-table-column prop="jobId" label="任务ID" width="90" />
+      <el-table-column prop="jobDesc" label="任务描述" min-width="180" show-overflow-tooltip />
+      <el-table-column prop="executorAppName" label="执行器" min-width="160" show-overflow-tooltip />
+      <el-table-column prop="executorHandler" label="Handler" min-width="160" show-overflow-tooltip />
       <el-table-column prop="author" label="负责人" width="110" show-overflow-tooltip />
-      <el-table-column prop="executorHandler" label="JobHandler" min-width="170" show-overflow-tooltip />
-      <el-table-column label="执行结果" width="110">
+      <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <el-tag :type="failureTagType(row.failureType)">{{ row.failureTypeName || row.failureType }}</el-tag>
+          <el-tag :type="executionStatusTag(row.failureType)">{{ row.failureTypeName }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="triggerCode" label="调度码" width="90" />
-      <el-table-column prop="handleCode" label="执行码" width="90" />
-      <el-table-column prop="logId" label="Log ID" width="100" />
       <el-table-column prop="triggerTime" label="触发时间" width="170" />
+      <el-table-column prop="triggerCode" label="触发码" width="90" />
       <el-table-column prop="handleTime" label="处理时间" width="170" />
-      <el-table-column label="失败摘要" min-width="260" show-overflow-tooltip>
-        <template #default="{ row }">
-          {{ failureMessage(row) }}
-        </template>
-      </el-table-column>
+      <el-table-column prop="handleCode" label="处理码" width="90" />
+      <el-table-column prop="handleMsg" label="错误摘要" min-width="220" show-overflow-tooltip />
     </el-table>
-    <div class="detail-pagination">
+
+    <div class="log-pagination">
       <el-pagination
-        v-model:current-page="detailPage"
-        v-model:page-size="detailPageSize"
-        :page-sizes="[20, 50, 100, 200]"
-        :total="selectedDetail?.failedJobCount || 0"
-        layout="total, sizes, prev, pager, next, jumper"
-        @current-change="handleDetailPageChange"
-        @size-change="handleDetailPageSizeChange"
+        background
+        layout="total, sizes, prev, pager, next"
+        :total="logPage?.total || 0"
+        :current-page="logFilters.page"
+        :page-size="logFilters.pageSize"
+        :page-sizes="[10, 20, 50, 100, 200]"
+        @current-change="handleLogPageChange"
+        @size-change="handleLogPageSizeChange"
       />
     </div>
   </el-dialog>
+
 </template>
 
 <style scoped>
@@ -602,22 +529,7 @@ onMounted(async () => {
 }
 
 .ops-tabs,
-.filter-form,
-.detail-table {
-  margin-top: 16px;
-}
-
-.detail-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.detail-pagination {
-  display: flex;
-  justify-content: flex-end;
+.filter-form {
   margin-top: 16px;
 }
 
@@ -625,8 +537,57 @@ onMounted(async () => {
   padding-right: 8px;
 }
 
+.detail-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.summary-label {
+  display: block;
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.detail-summary strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-filter-form {
+  margin-bottom: 8px;
+}
+
+.log-alert {
+  margin-bottom: 12px;
+}
+
+.log-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
 .empty-copy {
   color: #64748b;
   font-size: 14px;
+}
+
+@media (max-width: 900px) {
+  .detail-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

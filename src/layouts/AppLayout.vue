@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
+import { changePassword } from '@/api/auth'
 import {
   fetchNotifications,
   fetchUnreadNotificationCount,
@@ -20,8 +21,9 @@ const authStore = useAuthStore()
 
 const activeMenu = computed(() => String(route.meta.activeMenu || route.path))
 const viewKey = computed(() => activeMenu.value)
+const visibleMenuItems = computed(() => filterMenuItems(menuItems))
 const defaultOpeneds = computed(() =>
-  menuItems
+  visibleMenuItems.value
     .filter((item) => item.children?.length)
     .map((item) => item.path),
 )
@@ -29,7 +31,7 @@ const navItems = ref<MenuItem[]>([])
 
 const flattenedMenuItems = computed(() => {
   const items: MenuItem[] = []
-  for (const item of menuItems) {
+  for (const item of visibleMenuItems.value) {
     if (item.children?.length) {
       items.push(...item.children)
     } else {
@@ -41,8 +43,15 @@ const flattenedMenuItems = computed(() => {
 
 const currentPageTitle = computed(() => String(route.meta.title || '工作台'))
 const notificationDrawerVisible = ref(false)
+const passwordDialogVisible = ref(false)
+const passwordSubmitting = ref(false)
 const notifications = ref<NotificationItem[]>([])
 const unreadNotificationCount = ref(0)
+const passwordForm = ref({
+  oldPassword: '',
+  newPassword: '',
+  confirmPassword: '',
+})
 
 function resolveMenuItem(path: string): MenuItem {
   const matched = flattenedMenuItems.value.find((item) => item.path === path)
@@ -86,9 +95,60 @@ async function handleSelect(path: string) {
   await router.push(path)
 }
 
+function filterMenuItems(items: MenuItem[]): MenuItem[] {
+  return items
+    .map((item) => {
+      if (item.children?.length) {
+        const children = filterMenuItems(item.children)
+        return children.length ? { ...item, children } : null
+      }
+      return authStore.hasPermission(item.permission) ? item : null
+    })
+    .filter((item): item is MenuItem => Boolean(item))
+}
+
 function logout() {
   authStore.signOut()
   router.push('/login')
+}
+
+function openPasswordDialog() {
+  passwordForm.value = {
+    oldPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  }
+  passwordDialogVisible.value = true
+}
+
+async function submitPassword() {
+  if (!passwordForm.value.oldPassword || !passwordForm.value.newPassword) {
+    ElMessage.warning('请填写旧密码和新密码')
+    return
+  }
+  if (passwordForm.value.newPassword.length < 8) {
+    ElMessage.warning('新密码至少 8 位')
+    return
+  }
+  if (passwordForm.value.newPassword !== passwordForm.value.confirmPassword) {
+    ElMessage.warning('两次输入的新密码不一致')
+    return
+  }
+  passwordSubmitting.value = true
+  try {
+    await changePassword({
+      oldPassword: passwordForm.value.oldPassword,
+      newPassword: passwordForm.value.newPassword,
+    })
+    ElMessage.success('密码已修改')
+    passwordDialogVisible.value = false
+    await authStore.loadProfile()
+  } catch (error) {
+    ElMessage.error('修改密码失败')
+    console.error(error)
+  } finally {
+    passwordSubmitting.value = false
+  }
 }
 
 async function loadNotifications() {
@@ -176,7 +236,7 @@ onMounted(loadNotifications)
         class="menu-panel"
         @select="handleSelect"
       >
-        <template v-for="item in menuItems" :key="item.key">
+        <template v-for="item in visibleMenuItems" :key="item.key">
           <el-sub-menu v-if="item.children?.length" :index="item.path">
             <template #title>{{ item.label }}</template>
             <el-menu-item
@@ -196,17 +256,6 @@ onMounted(loadNotifications)
 
     <el-container>
       <el-header class="layout-header">
-        <div class="header-title">{{ currentPageTitle }}</div>
-        <div class="header-actions">
-          <el-badge :value="unreadNotificationCount" :hidden="unreadNotificationCount === 0">
-            <el-button plain @click="openNotifications">通知</el-button>
-          </el-badge>
-          <el-tag type="success" effect="dark">{{ authStore.userName || '未登录' }}</el-tag>
-          <el-button type="primary" plain @click="logout">退出</el-button>
-        </div>
-      </el-header>
-
-      <el-main class="layout-main">
         <nav class="navigation-tabs" aria-label="已访问页面导航">
           <div
             v-for="item in navItems"
@@ -228,7 +277,17 @@ onMounted(loadNotifications)
             </button>
           </div>
         </nav>
+        <div class="header-actions">
+          <el-badge :value="unreadNotificationCount" :hidden="unreadNotificationCount === 0">
+            <el-button plain @click="openNotifications">通知</el-button>
+          </el-badge>
+          <el-button plain @click="openPasswordDialog">改密</el-button>
+          <el-tag type="success" effect="dark">{{ authStore.displayName || authStore.userName || '未登录' }}</el-tag>
+          <el-button type="primary" plain @click="logout">退出</el-button>
+        </div>
+      </el-header>
 
+      <el-main class="layout-main">
         <router-view v-slot="{ Component }">
           <KeepAlive>
             <component :is="Component" :key="viewKey" />
@@ -262,6 +321,24 @@ onMounted(loadNotifications)
         </article>
       </div>
     </el-drawer>
+
+    <el-dialog v-model="passwordDialogVisible" title="修改密码" width="420px">
+      <el-form label-position="top">
+        <el-form-item label="旧密码">
+          <el-input v-model="passwordForm.oldPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input v-model="passwordForm.newPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="确认新密码">
+          <el-input v-model="passwordForm.confirmPassword" type="password" show-password />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="passwordDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="passwordSubmitting" @click="submitPassword">保存</el-button>
+      </template>
+    </el-dialog>
   </el-container>
 </template>
 
@@ -359,15 +436,10 @@ onMounted(loadNotifications)
   backdrop-filter: blur(20px);
 }
 
-.header-title {
-  color: #0f172a;
-  font-size: 16px;
-  font-weight: 700;
-}
-
 .header-actions {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 12px;
 }
 
@@ -444,10 +516,10 @@ onMounted(loadNotifications)
 
 .navigation-tabs {
   display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
   gap: 8px;
-  margin-bottom: 18px;
   overflow-x: auto;
-  padding-bottom: 2px;
 }
 
 .navigation-tab {

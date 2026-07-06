@@ -19,6 +19,7 @@ export interface ProjectDetail extends ProjectSummary {
 
 export interface ProjectGroup {
   id: number
+  businessLineCode: string
   businessLineName: string
   groupName: string
   gitlabGroupName: string | null
@@ -31,6 +32,7 @@ export interface ProjectGroup {
 export interface ProjectInvolvedSystem {
   id: number
   systemScope: 'PROJECT_GROUP' | 'BUSINESS_LINE' | 'MIDDLE_PLATFORM'
+  businessLineCode: string
   businessLine: string
   projectGroup: string
   systemName: string
@@ -100,6 +102,7 @@ export interface IntakeSummary {
   approvalCode: string | null
   submittedTime: string | null
   requirementType: string | null
+  priority: string | null
   developmentBranchName: string | null
   zentaoUrl: string | null
   requirementDigest: string | null
@@ -107,6 +110,7 @@ export interface IntakeSummary {
   requirementName: string | null
   requirementSummary: string | null
   businessLine: string | null
+  businessLineCode: string | null
   remark: string | null
   totalEstimatedEffort: string | null
   developmentEstimatedEffort: string | null
@@ -129,6 +133,91 @@ export interface IntakeSummary {
   enrichmentStatus: string | null
   status: string
   convertedWorkItemId: number | null
+  activeTodoCount: number
+}
+
+export type DemandTypeFilter = 'ALL' | 'DEVELOPMENT' | 'OPERATIONS'
+
+export interface DashboardDemandTypeOption {
+  value: DemandTypeFilter
+  label: string
+}
+
+export interface IntakeDashboardStageCard {
+  key: string
+  label: string
+  statuses: string[]
+  note: string
+  className: string
+  tagClass: string
+  value: number
+}
+
+export interface IntakeDashboardBusinessLineStats {
+  businessLineCode: string | null
+  businessLine: string
+  notStartedCount: number
+  developingCount: number
+  testingCount: number
+  pendingReleaseCount: number
+  totalCount: number
+  demandCount: number
+  demandRatio: number
+}
+
+export interface IntakeDashboardDemand {
+  id: number
+  title: string
+  businessLine: string
+  businessLineCode: string | null
+  demandStatus: string
+  requirementType: string
+  approvalCode: string
+  proposerName: string
+  receivedAt: string
+  note: string
+  groupLabel: string
+  groupTagClass: string
+}
+
+export interface ProjectProgressReportSummary {
+  key: string
+  label: string
+  value: number
+  statuses: string[]
+}
+
+export interface ProjectProgressReportDemand {
+  id: number
+  title: string
+  businessLine: string
+  demandStatus: string
+  approvalCode: string
+  proposerName: string
+  receivedAt: string
+}
+
+export interface ProjectProgressReportReleasedDemand extends ProjectProgressReportDemand {
+  releasedTime: string
+}
+
+export interface ProjectProgressReport {
+  title: string
+  generatedAt: string
+  statusNote: string
+  summary: ProjectProgressReportSummary[]
+  weeklyReleasedDemands: ProjectProgressReportReleasedDemand[]
+  pendingReleaseDemands: ProjectProgressReportDemand[]
+}
+
+export interface IntakeDashboard {
+  demandType: DemandTypeFilter
+  demandTypeLabel: string
+  businessLineRecordsCount: number
+  demandCards: IntakeDashboardStageCard[]
+  businessLineStats: IntakeDashboardBusinessLineStats[]
+  highlightedDemands: IntakeDashboardDemand[]
+  progressReport: ProjectProgressReport
 }
 
 export interface IntakeRequirementFolder {
@@ -265,6 +354,7 @@ export interface IntakeStructuredData {
   requirementSummary: string | null
   department: string | null
   businessLine: string | null
+  businessLineCode: string | null
   remark: string | null
   plannedDueDate: string | null
   plannedDevelopmentStartDate: string | null
@@ -331,9 +421,44 @@ export interface IntakeDetail {
   enrichmentUpdatedAt: string | null
   aiDraft: IntakeAIDraft | null
   attachments: IntakeAttachment[]
+  todos: IntakeTodo[]
   convertedWorkItemId: number | null
   createdAt: string
   updatedAt: string
+}
+
+export interface IntakeTodo {
+  id: number
+  intakeId: number
+  title: string
+  content: string | null
+  status: string
+  assigneeUserName: string | null
+  plannedAt: string | null
+  completedAt: string | null
+  processResult: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface IntakeTodoCreateRequest {
+  title: string
+  content?: string | null
+  assigneeUserName?: string | null
+  plannedAt?: string | null
+}
+
+export interface IntakeTodoUpdateRequest {
+  title: string
+  content?: string | null
+  assigneeUserName?: string | null
+  plannedAt?: string | null
+}
+
+export interface IntakeTodoStatusRequest {
+  status: string
+  processResult?: string | null
+  completedAt?: string | null
 }
 
 export interface IntakeCreateRequest {
@@ -344,6 +469,10 @@ export interface IntakeCreateRequest {
   rawContent: string
 }
 
+export interface IntakeBusinessLineUpdateRequest {
+  businessLine?: string
+  businessLineCode?: string
+}
 
 export interface IntakeStageActionRequest {
   action: string

@@ -6,9 +6,11 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import {
   appendIntakeAttachments,
   advanceIntakeStage,
+  createIntakeTodo,
   createUploadIntake,
   deleteIntakeAttachment,
   deleteIntake,
+  deleteIntakeTodo,
   downloadAttachment,
   confirmDevelopmentAnalysis,
   fetchIntakeDetail,
@@ -26,14 +28,31 @@ import {
   startClarificationAnalysis,
   syncIntakeZentao,
   updateDevelopmentAnalysisDraft,
+  updateIntakeBusinessLine,
   updateIntakeDevelopmentBranch,
+  updateIntakePriority,
+  updateIntakeTodo,
+  updateIntakeTodoStatus,
   updateIntakeZentaoLink,
 } from '@/api/intake'
 import { fetchProjectGroups, fetchSelectableProjectInvolvedSystems } from '@/api/project'
 import { fetchDeveloperOptions } from '@/api/system-config'
 import { useAuthStore } from '@/stores/auth'
-import type { DevelopmentAnalysisResponse, DevelopmentWorkItemDraft, IntakeAttachment, IntakeClarificationAnalysisResponse, IntakeClarificationItem, IntakeDetail, IntakeSummary, ProjectGroup, ProjectInvolvedSystem, UserOption } from '@/types/work-item'
+import type { DevelopmentAnalysisResponse, DevelopmentWorkItemDraft, IntakeAttachment, IntakeClarificationAnalysisResponse, IntakeClarificationItem, IntakeDetail, IntakeSummary, IntakeTodo, ProjectGroup, ProjectInvolvedSystem, UserOption } from '@/types/work-item'
 import { buildAcceptanceDateDisplay, buildReleaseDateDisplay, buildTestingDateDisplay } from './intakeDateColumns'
+import {
+  resolveDevelopmentProjectGroupCandidate,
+  shouldIgnoreDevelopmentSystemOptionsError,
+  shouldReloadDevelopmentDraftAfterSaveError,
+} from './intakeProjectGroupErrors'
+import {
+  countActiveIntakeTodos,
+  formatActiveTodoLabel,
+  formatTodoTabLabel,
+  isActiveIntakeTodoStatus,
+  validateIntakeTodoEditableForm,
+  validateIntakeTodoStatusForm,
+} from './intakeTodoForms'
 
 const authStore = useAuthStore()
 
@@ -72,7 +91,20 @@ const pauseDemandSubmitting = ref(false)
 const pauseDemandTarget = ref<IntakeSummary | null>(null)
 const zentaoSubmitting = ref(false)
 const developmentBranchSubmitting = ref(false)
+const businessLineDialogVisible = ref(false)
+const businessLineSubmitting = ref(false)
+const priorityDialogVisible = ref(false)
+const prioritySubmitting = ref(false)
+const priorityTarget = ref<IntakeSummary | null>(null)
 const sqlDraftSubmitting = ref(false)
+const todoFormVisible = ref(false)
+const todoFormSubmitting = ref(false)
+const todoFormMode = ref<'create' | 'edit'>('create')
+const editingTodo = ref<IntakeTodo | null>(null)
+const todoStatusVisible = ref(false)
+const todoStatusSubmitting = ref(false)
+const statusEditingTodo = ref<IntakeTodo | null>(null)
+const deletingTodoId = ref<number | null>(null)
 const developmentAnalysis = ref<DevelopmentAnalysisResponse | null>(null)
 const clarificationAnalysis = ref<IntakeClarificationAnalysisResponse | null>(null)
 const developmentConfirmSubmitting = ref(false)
@@ -84,6 +116,8 @@ const filters = reactive({
   approvalCode: '',
   proposerName: '',
   requirementName: '',
+  businessLine: '',
+  requirementType: '',
   demandStatus: '',
   releasedDateRange: [] as string[] | null,
 })
@@ -108,6 +142,28 @@ const zentaoForm = reactive({
 const developmentBranchForm = reactive({
   name: '',
 })
+
+const businessLineForm = reactive({
+  businessLine: '',
+})
+const priorityForm = reactive({
+  priority: '',
+})
+
+const todoForm = reactive({
+  title: '',
+  content: '',
+  assigneeUserName: '',
+  plannedAt: '',
+})
+
+const todoStatusForm = reactive({
+  status: '',
+  processResult: '',
+  completedAt: '',
+})
+
+const todoStatusOptions = ['待处理', '处理中', '已完成', '已取消']
 
 const stageActionForm = reactive({
   action: '',
@@ -136,11 +192,19 @@ const pauseDemandForm = reactive({
   pauseDate: '',
 })
 
+const priorityOptions = ['高', '中', '低']
+
 const updateHistories = computed(() =>
   (selectedDetail.value?.histories || []).filter((item) => item.actionType === 'UPDATE'),
 )
 
 const detailStageTimeline = computed(() => buildDemandStageTimeline(selectedDetail.value, developmentAnalysis.value))
+
+const detailTodos = computed(() => selectedDetail.value?.todos || [])
+
+const activeDetailTodoCount = computed(() => countActiveIntakeTodos(detailTodos.value))
+
+const todoFormTitle = computed(() => (todoFormMode.value === 'create' ? '新增需求待办' : '编辑需求待办'))
 
 const previewKind = computed(() => {
   if (!previewImageUrl.value) {
@@ -158,6 +222,19 @@ const previewKind = computed(() => {
 const isDevelopmentTaskEvaluationDialog = computed(() =>
   stageActionForm.action === 'COMPLETE_EVALUATION' && stageActionRow.value?.requirementType === '研发需求',
 )
+const canCreateRecord = computed(() => authStore.hasPermission('intake:record:create'))
+const canViewDetail = computed(() => authStore.hasPermission('intake:record:detail'))
+const canCopyCollaboration = computed(() => authStore.hasPermission('intake:collaboration:copy'))
+const canOpenZentao = computed(() => authStore.hasPermission('intake:zentao:open'))
+const canOpenRequirementFolder = computed(() => authStore.hasPermission('intake:requirement-folder:open'))
+const canOpenDevelopmentPlanFolder = computed(() => authStore.hasPermission('intake:development-plan-folder:open'))
+const canDeleteRecord = computed(() => authStore.hasPermission('intake:record:delete'))
+const canOperateStage = computed(() => authStore.hasPermission('intake:stage:operate'))
+const canOperateAi = computed(() => authStore.hasPermission('intake:ai:operate'))
+const canManageTodo = computed(() => authStore.hasPermission('intake:todo:manage'))
+const canManageAttachment = computed(() => authStore.hasAnyPermission(['intake:attachment:manage', 'intake:record:update']))
+const canUpdateMetadata = computed(() => authStore.hasAnyPermission(['intake:metadata:update', 'intake:record:update']))
+const canSyncZentao = computed(() => authStore.hasAnyPermission(['intake:zentao:sync', 'intake:ai:operate']))
 
 function currentDevelopmentDemandStatus() {
   if (stageActionVisible.value && isDevelopmentTaskEvaluationDialog.value) {
@@ -167,7 +244,7 @@ function currentDevelopmentDemandStatus() {
 }
 
 function canRunDevelopmentAnalysis() {
-  return currentDevelopmentDemandStatus() === '待评估'
+  return canOperateAi.value && currentDevelopmentDemandStatus() === '待评估'
 }
 
 function canConfirmDevelopmentDraft() {
@@ -176,16 +253,25 @@ function canConfirmDevelopmentDraft() {
 
 function canEditDevelopmentDraft() {
   return Boolean(
-    currentDevelopmentDemandStatus()
+    canOperateAi.value
+    && currentDevelopmentDemandStatus()
     && !isDevelopmentAnalysisInProgress(developmentAnalysis.value?.status),
   )
 }
 
 function resolveDevelopmentProjectGroup(draftProjectGroup?: string | null) {
-  return cleanBusinessValue(draftProjectGroup)
-    || cleanBusinessValue(stageActionForm.projectGroup)
-    || cleanBusinessValue(currentDevelopmentContextRow()?.projectHint)
-    || cleanBusinessValue(currentDevelopmentContextDetail()?.structuredData?.projectHint)
+  const row = currentDevelopmentContextRow()
+  const detail = currentDevelopmentContextDetail()
+  return resolveDevelopmentProjectGroupCandidate({
+    draftProjectGroup,
+    stageProjectGroup: stageActionForm.projectGroup,
+    rowBusinessLineCode: row?.businessLineCode,
+    rowBusinessLine: row?.businessLine,
+    rowProjectHint: row?.projectHint,
+    detailBusinessLineCode: detail?.structuredData?.businessLineCode,
+    detailBusinessLine: detail?.structuredData?.businessLine,
+    detailProjectHint: detail?.structuredData?.projectHint,
+  })
 }
 
 function formatProjectGroupOption(item: ProjectGroup) {
@@ -217,6 +303,8 @@ async function loadIntakeRecords() {
       approvalCode: filters.approvalCode || undefined,
       proposerName: filters.proposerName || undefined,
       requirementName: filters.requirementName || undefined,
+      businessLine: filters.businessLine || undefined,
+      requirementType: filters.requirementType || undefined,
       demandStatus: filters.demandStatus || undefined,
       releasedStartDate: releasedDateRange[0] || undefined,
       releasedEndDate: releasedDateRange[1] || undefined,
@@ -254,11 +342,254 @@ function syncDevelopmentForms(detail: IntakeDetail | null) {
   developmentBranchForm.name = detail?.structuredData?.developmentBranchName || ''
 }
 
+function normalizeIntakeDetail(detail: IntakeDetail) {
+  detail.todos ||= []
+  detail.attachments ||= []
+  detail.histories ||= []
+  detail.relatedWorkItems ||= []
+  detail.involvedSystems ||= []
+  return detail
+}
+
+function openBusinessLineDialog() {
+  if (!selectedDetail.value) {
+    return
+  }
+  businessLineForm.businessLine = selectedDetail.value.structuredData?.businessLineCode
+    || selectedDetail.value.structuredData?.businessLine
+    || ''
+  businessLineDialogVisible.value = true
+}
+
+function resetBusinessLineDialog() {
+  businessLineForm.businessLine = ''
+}
+
+async function submitBusinessLine() {
+  if (!selectedDetail.value) {
+    return
+  }
+  const businessLine = businessLineForm.businessLine.trim()
+  if (!businessLine) {
+    ElMessage.warning('请选择业务线')
+    return
+  }
+  const intakeId = selectedDetail.value.id
+  businessLineSubmitting.value = true
+  try {
+    const detail = normalizeIntakeDetail(await updateIntakeBusinessLine(intakeId, { businessLineCode: businessLine }))
+    if (!selectedDetail.value || selectedDetail.value.id !== intakeId) {
+      return
+    }
+    selectedDetail.value = detail
+    syncDevelopmentForms(detail)
+    stageActionForm.projectGroup = detail.structuredData?.businessLineCode || detail.structuredData?.businessLine || ''
+    if (isDevelopmentRequirement(detail) && stageActionForm.projectGroup) {
+      await loadDevelopmentTaskOptions(stageActionForm.projectGroup)
+    }
+    businessLineDialogVisible.value = false
+    ElMessage.success('业务线已保存')
+    await loadIntakeRecords()
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '保存业务线失败'))
+    console.error(error)
+  } finally {
+    businessLineSubmitting.value = false
+  }
+}
+
+function openPriorityDialog(row: IntakeSummary) {
+  priorityTarget.value = row
+  priorityForm.priority = row.priority || ''
+  priorityDialogVisible.value = true
+}
+
+function resetPriorityDialog() {
+  priorityTarget.value = null
+  priorityForm.priority = ''
+}
+
+async function submitPriority() {
+  if (!priorityTarget.value) {
+    return
+  }
+  if (!priorityOptions.includes(priorityForm.priority)) {
+    ElMessage.warning('请选择优先级')
+    return
+  }
+  const intakeId = priorityTarget.value.id
+  prioritySubmitting.value = true
+  try {
+    await updateIntakePriority(intakeId, { priority: priorityForm.priority })
+    priorityDialogVisible.value = false
+    ElMessage.success('优先级已保存')
+    await loadIntakeRecords()
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '保存优先级失败'))
+    console.error(error)
+  } finally {
+    prioritySubmitting.value = false
+  }
+}
+
+function resolvePriorityTagType(priority: string | null | undefined) {
+  switch (priority) {
+    case '高':
+      return 'danger'
+    case '中':
+      return 'warning'
+    case '低':
+      return 'info'
+    default:
+      return 'info'
+  }
+}
+
+function openCreateTodoDialog() {
+  if (!selectedDetail.value) {
+    return
+  }
+  todoFormMode.value = 'create'
+  editingTodo.value = null
+  todoForm.title = ''
+  todoForm.content = ''
+  todoForm.assigneeUserName = authStore.userName || ''
+  todoForm.plannedAt = ''
+  todoFormVisible.value = true
+}
+
+function openEditTodoDialog(todo: IntakeTodo) {
+  todoFormMode.value = 'edit'
+  editingTodo.value = todo
+  todoForm.title = todo.title || ''
+  todoForm.content = todo.content || ''
+  todoForm.assigneeUserName = todo.assigneeUserName || ''
+  todoForm.plannedAt = normalizePickerDateTimeValue(todo.plannedAt)
+  todoFormVisible.value = true
+}
+
+function resetTodoFormDialog() {
+  editingTodo.value = null
+  todoForm.title = ''
+  todoForm.content = ''
+  todoForm.assigneeUserName = ''
+  todoForm.plannedAt = ''
+  todoFormMode.value = 'create'
+}
+
+async function submitTodoForm() {
+  if (!selectedDetail.value) {
+    return
+  }
+  const validationMessage = validateIntakeTodoEditableForm(todoForm)
+  if (validationMessage) {
+    ElMessage.warning(validationMessage)
+    return
+  }
+  const intakeId = selectedDetail.value.id
+  const payload = {
+    title: todoForm.title.trim(),
+    content: cleanNullableBusinessValue(todoForm.content),
+    assigneeUserName: cleanNullableBusinessValue(todoForm.assigneeUserName),
+    plannedAt: cleanNullableBusinessValue(todoForm.plannedAt),
+  }
+  todoFormSubmitting.value = true
+  try {
+    if (todoFormMode.value === 'edit' && editingTodo.value) {
+      await updateIntakeTodo(intakeId, editingTodo.value.id, payload)
+      ElMessage.success('待办已更新')
+    } else {
+      await createIntakeTodo(intakeId, payload)
+      ElMessage.success('待办已新增')
+    }
+    todoFormVisible.value = false
+    await refreshSelectedDetail(intakeId)
+    await loadIntakeRecords()
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, todoFormMode.value === 'edit' ? '更新待办失败' : '新增待办失败'))
+    console.error(error)
+  } finally {
+    todoFormSubmitting.value = false
+  }
+}
+
+function openTodoStatusDialog(todo: IntakeTodo) {
+  statusEditingTodo.value = todo
+  todoStatusForm.status = todo.status || '待处理'
+  todoStatusForm.processResult = todo.processResult || ''
+  todoStatusForm.completedAt = normalizePickerDateTimeValue(todo.completedAt)
+  todoStatusVisible.value = true
+}
+
+function resetTodoStatusDialog() {
+  statusEditingTodo.value = null
+  todoStatusForm.status = ''
+  todoStatusForm.processResult = ''
+  todoStatusForm.completedAt = ''
+}
+
+async function submitTodoStatus() {
+  if (!selectedDetail.value || !statusEditingTodo.value) {
+    return
+  }
+  const validationMessage = validateIntakeTodoStatusForm(todoStatusForm)
+  if (validationMessage) {
+    ElMessage.warning(validationMessage)
+    return
+  }
+  const intakeId = selectedDetail.value.id
+  todoStatusSubmitting.value = true
+  try {
+    await updateIntakeTodoStatus(intakeId, statusEditingTodo.value.id, {
+      status: todoStatusForm.status,
+      processResult: cleanNullableBusinessValue(todoStatusForm.processResult),
+      completedAt: cleanNullableBusinessValue(todoStatusForm.completedAt),
+    })
+    todoStatusVisible.value = false
+    ElMessage.success('待办状态已更新')
+    await refreshSelectedDetail(intakeId)
+    await loadIntakeRecords()
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '更新待办状态失败'))
+    console.error(error)
+  } finally {
+    todoStatusSubmitting.value = false
+  }
+}
+
+async function deleteTodoFromDetail(todo: IntakeTodo) {
+  if (!selectedDetail.value) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认删除待办“${todo.title || todo.id}”？`, '删除需求待办', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  const intakeId = selectedDetail.value.id
+  deletingTodoId.value = todo.id
+  try {
+    await deleteIntakeTodo(intakeId, todo.id)
+    ElMessage.success('待办已删除')
+    await refreshSelectedDetail(intakeId)
+    await loadIntakeRecords()
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '删除待办失败'))
+    console.error(error)
+  } finally {
+    deletingTodoId.value = null
+  }
+}
+
 async function loadDetail(id: number, recordView = true) {
   const requestToken = ++detailRequestToken
   detailLoading.value = true
   try {
-    const detail = await fetchIntakeDetail(id, recordView)
+    const detail = normalizeIntakeDetail(await fetchIntakeDetail(id, recordView))
     if (requestToken !== detailRequestToken) {
       return null
     }
@@ -276,6 +607,15 @@ async function loadDetail(id: number, recordView = true) {
       detailLoading.value = false
     }
   }
+}
+
+async function refreshSelectedDetail(intakeId: number) {
+  const detail = normalizeIntakeDetail(await fetchIntakeDetail(intakeId, false))
+  if (selectedDetail.value?.id === intakeId) {
+    selectedDetail.value = detail
+    syncDevelopmentForms(detail)
+  }
+  return detail
 }
 
 async function openDetail(id: number) {
@@ -301,12 +641,12 @@ async function openDetail(id: number) {
   }
   const analysis = await loadDevelopmentAnalysis(id, { expectedDetailId: id, clearBeforeLoad: true })
   if (analysis?.draft?.projectGroup) {
-    stageActionForm.projectGroup = analysis.draft.projectGroup
+    stageActionForm.projectGroup = resolveDevelopmentProjectGroup(analysis.draft.projectGroup)
   }
   if (!analysis && isDevelopmentRequirement(detail) && detail.demandStatus === '待评估') {
     ensureManualDevelopmentDraft()
     if (developmentAnalysis.value?.draft?.projectGroup) {
-      stageActionForm.projectGroup = developmentAnalysis.value.draft.projectGroup
+      stageActionForm.projectGroup = resolveDevelopmentProjectGroup(developmentAnalysis.value.draft.projectGroup)
     }
     await loadDevelopmentTaskOptions(stageActionForm.projectGroup)
   }
@@ -420,7 +760,9 @@ async function loadDevelopmentSystemOptions(projectGroup: string) {
     developmentSystemOptions.value = await fetchSelectableProjectInvolvedSystems(normalizedProjectGroup)
   } catch (error) {
     developmentSystemOptions.value = []
-    ElMessage.error('加载涉及系统清单失败')
+    if (!shouldIgnoreDevelopmentSystemOptionsError(error)) {
+      ElMessage.error('加载涉及系统清单失败')
+    }
     console.error(error)
   }
 }
@@ -704,15 +1046,15 @@ function isDevelopmentRequirement(detail: IntakeDetail | null) {
 }
 
 function canCloseDemand(record: IntakeDetail | IntakeSummary | null) {
-  return Boolean(record?.demandStatus && !['已完成', '终止关闭', '已暂停'].includes(record.demandStatus))
+  return Boolean(canOperateStage.value && record?.demandStatus && !['已完成', '终止关闭', '已暂停'].includes(record.demandStatus))
 }
 
 function canPauseDemand(record: IntakeDetail | IntakeSummary | null) {
-  return Boolean(record?.demandStatus && !['已完成', '终止关闭', '已暂停'].includes(record.demandStatus))
+  return Boolean(canOperateStage.value && record?.demandStatus && !['已完成', '终止关闭', '已暂停'].includes(record.demandStatus))
 }
 
 function canResumeDemand(record: IntakeDetail | IntakeSummary | null) {
-  return record?.demandStatus === '已暂停'
+  return canOperateStage.value && record?.demandStatus === '已暂停'
 }
 
 function openCloseDemandDialog(row: IntakeSummary) {
@@ -838,6 +1180,9 @@ async function resumeDemandFromRow(row: IntakeSummary) {
 }
 
 function resolveActionForRow(row: IntakeSummary) {
+  if (!canOperateStage.value) {
+    return null
+  }
   if (isOperationsDemand(row.requirementType)) {
     switch (row.demandStatus) {
       case '已收录':
@@ -996,7 +1341,7 @@ async function openStageActionDialog(row: IntakeSummary) {
       const analysis = await loadDevelopmentAnalysis(row.id, { clearBeforeLoad: true })
       if (analysis?.draft) {
         const draft = analysis.draft
-        stageActionForm.projectGroup = draft.projectGroup || stageActionForm.projectGroup
+        stageActionForm.projectGroup = resolveDevelopmentProjectGroup(draft.projectGroup)
         stageActionForm.plannedDueDate = normalizePickerDateValue(draft.plannedDueDate || row.plannedDueDate)
       }
       ensureManualDevelopmentDraft()
@@ -1446,7 +1791,7 @@ async function openDevelopmentPlanFolder(row: IntakeSummary) {
 }
 
 function canGenerateSqlDraft(detail: IntakeDetail | null) {
-  return detail?.structuredData?.requirementType === '数据提取/运维'
+  return canOperateAi.value && detail?.structuredData?.requirementType === '数据提取/运维'
 }
 
 function deliveryDataAttachments(detail: IntakeDetail | null) {
@@ -1461,7 +1806,7 @@ function ensureManualDevelopmentDraft() {
   const detail = currentDevelopmentContextDetail()
   const row = currentDevelopmentContextRow()
   const structuredData = detail?.structuredData
-  const projectGroup = stageActionForm.projectGroup || row?.projectHint || structuredData?.projectHint || ''
+  const projectGroup = resolveDevelopmentProjectGroup()
   stageActionForm.projectGroup = projectGroup
   developmentAnalysis.value = {
     id: 0,
@@ -1691,7 +2036,9 @@ async function persistDevelopmentDraft(intakeId: number, showSuccess = true) {
     return true
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '保存研发任务失败'))
-    await loadDevelopmentAnalysis(intakeId, selectedDetail.value?.id === intakeId ? { expectedDetailId: intakeId } : {})
+    if (shouldReloadDevelopmentDraftAfterSaveError(error)) {
+      await loadDevelopmentAnalysis(intakeId, selectedDetail.value?.id === intakeId ? { expectedDetailId: intakeId } : {})
+    }
     console.error(error)
     return false
   } finally {
@@ -1842,7 +2189,7 @@ async function submitDetailAttachments(files: File[]) {
 }
 
 function canRetryEnrichment(record: Pick<IntakeDetail, 'enrichmentStatus'> | Pick<IntakeSummary, 'enrichmentStatus'> | null | undefined) {
-  return record?.enrichmentStatus === 'FAILED'
+  return canOperateAi.value && record?.enrichmentStatus === 'FAILED'
 }
 
 async function retryEnrichmentFromRow(row: IntakeSummary) {
@@ -2035,6 +2382,17 @@ function normalizePickerDateValue(value: string | null | undefined) {
   return `${year}/${month.padStart(2, '0')}/${day.padStart(2, '0')}`
 }
 
+function normalizePickerDateTimeValue(value: string | null | undefined) {
+  if (isBlankBusinessValue(value)) {
+    return ''
+  }
+  const parsed = parseDateTimeParts(value)
+  if (!parsed) {
+    return ''
+  }
+  return `${parsed.year}-${parsed.month}-${parsed.day}T${parsed.hour || '00'}:${parsed.minute || '00'}:00`
+}
+
 function compareBusinessDate(left: string | null | undefined, right: string | null | undefined) {
   const leftDate = normalizePickerDateValue(left)
   const rightDate = normalizePickerDateValue(right)
@@ -2192,6 +2550,25 @@ function resolveDemandStatusClass(status: string | null | undefined) {
     default:
       return 'demand-status-chip--default'
   }
+}
+
+function resolveTodoStatusType(status: string | null | undefined) {
+  switch (status) {
+    case '待处理':
+      return 'warning'
+    case '处理中':
+      return 'primary'
+    case '已完成':
+      return 'success'
+    case '已取消':
+      return 'info'
+    default:
+      return 'info'
+  }
+}
+
+function resolveIntakeRowClassName({ row }: { row: IntakeSummary }) {
+  return (row.activeTodoCount || 0) > 0 ? 'intake-table-row--active-todo' : ''
 }
 
 function buildDemandStageTimeline(detail: IntakeDetail | null, analysis: DevelopmentAnalysisResponse | null) {
@@ -2412,6 +2789,22 @@ onMounted(loadBaseData)
           @keyup.enter="handleSearch"
         />
       </el-form-item>
+      <el-form-item label="业务线">
+        <el-select v-model="filters.businessLine" filterable clearable placeholder="业务线" style="width: 180px">
+          <el-option
+            v-for="item in projectGroups.filter((group) => group.enabled)"
+            :key="item.id"
+            :label="item.groupName"
+            :value="item.businessLineCode"
+          />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="需求类型">
+        <el-select v-model="filters.requirementType" placeholder="需求类型" clearable style="width: 160px">
+          <el-option label="研发需求" value="研发需求" />
+          <el-option label="数据提取/运维" value="数据提取/运维" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="需求状态">
         <el-select v-model="filters.demandStatus" placeholder="需求状态" clearable style="width: 160px">
           <el-option label="已收录" value="已收录" />
@@ -2446,11 +2839,16 @@ onMounted(loadBaseData)
         <el-button type="primary" @click="handleSearch">查询</el-button>
       </el-form-item>
       <el-form-item>
-        <el-button @click="openCreateDialog">需求录入</el-button>
+        <el-button v-if="canCreateRecord" @click="openCreateDialog">需求录入</el-button>
       </el-form-item>
     </el-form>
 
-    <el-table v-loading="loading" :data="intakeRecords" class="intake-table">
+    <el-table
+      v-loading="loading"
+      :data="intakeRecords"
+      class="intake-table"
+      :row-class-name="resolveIntakeRowClassName"
+    >
       <el-table-column label="" width="56" align="center">
         <template #default="{ row }">
           <el-tooltip :content="`识别状态：${resolveEnrichmentStatusLabel(row.enrichmentStatus)}`" placement="top">
@@ -2468,12 +2866,17 @@ onMounted(loadBaseData)
                 <div class="requirement-tooltip-row"><span>提出人</span><strong>{{ row.proposerName || '-' }}</strong></div>
                 <div class="requirement-tooltip-row"><span>提交时间</span><strong>{{ resolveSubmittedTime(row) }}</strong></div>
                 <div class="requirement-tooltip-row"><span>业务线</span><strong>{{ row.businessLine || '-' }}</strong></div>
+                <div v-if="row.activeTodoCount" class="requirement-tooltip-row"><span>未完成待办</span><strong>{{ row.activeTodoCount }}</strong></div>
               </div>
             </template>
             <div class="requirement-cell">
               <div class="requirement-cell-line">
                 <span class="requirement-cell-title">{{ row.requirementName || row.requirementDigest || '-' }}</span>
+                <span v-if="row.activeTodoCount" class="active-todo-badge">
+                  {{ formatActiveTodoLabel(row.activeTodoCount) }}
+                </span>
                 <el-button
+                  v-if="canCopyCollaboration"
                   class="requirement-copy-button"
                   :icon="DocumentCopy"
                   link
@@ -2485,6 +2888,7 @@ onMounted(loadBaseData)
               <div class="requirement-cell-line requirement-cell-line--meta">
                 <span class="requirement-cell-meta">审批编号：{{ row.approvalCode || '-' }}</span>
                 <el-button
+                  v-if="canCopyCollaboration"
                   class="requirement-copy-button"
                   :icon="DocumentCopy"
                   link
@@ -2495,6 +2899,14 @@ onMounted(loadBaseData)
               </div>
             </div>
           </el-tooltip>
+        </template>
+      </el-table-column>
+      <el-table-column label="优先级" width="96" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.priority" size="small" :type="resolvePriorityTagType(row.priority)" effect="plain">
+            {{ row.priority }}
+          </el-tag>
+          <span v-else>-</span>
         </template>
       </el-table-column>
       <el-table-column prop="proposerName" label="提出人" width="120" />
@@ -2588,8 +3000,9 @@ onMounted(loadBaseData)
             >
               重新识别
             </el-button>
-            <el-button link type="primary" @click="openDetail(row.id)">查看详情</el-button>
+            <el-button v-if="canViewDetail" link type="primary" @click="openDetail(row.id)">查看详情</el-button>
             <el-button
+              v-if="canOpenZentao"
               link
               type="primary"
               :disabled="!row.zentaoUrl?.trim()"
@@ -2625,19 +3038,24 @@ onMounted(loadBaseData)
                 >
                   关闭需求
                 </el-dropdown-item>
+                <el-dropdown-item v-if="canUpdateMetadata" @click="openPriorityDialog(row)">
+                  修改优先级
+                </el-dropdown-item>
                 <el-dropdown-item
+                  v-if="canOpenRequirementFolder"
                   :disabled="requirementFolderOpeningId === row.id"
                   @click="openRequirementFolder(row)"
                 >
                   {{ requirementFolderOpeningId === row.id ? '打开中...' : '打开需求文件夹' }}
                 </el-dropdown-item>
                 <el-dropdown-item
+                  v-if="canOpenDevelopmentPlanFolder"
                   :disabled="developmentPlanFolderOpeningId === row.id"
                   @click="openDevelopmentPlanFolder(row)"
                 >
                   {{ developmentPlanFolderOpeningId === row.id ? '打开中...' : '打开开发方案文件夹' }}
                 </el-dropdown-item>
-                <el-dropdown-item divided class="danger-dropdown-item" @click="handleDelete(row)">删除</el-dropdown-item>
+                <el-dropdown-item v-if="canDeleteRecord" divided class="danger-dropdown-item" @click="handleDelete(row)">删除</el-dropdown-item>
               </el-dropdown-menu>
             </template>
             </el-dropdown>
@@ -2684,7 +3102,7 @@ onMounted(loadBaseData)
             v-for="item in projectGroups"
             :key="item.id"
             :label="formatProjectGroupOption(item)"
-            :value="item.groupName"
+            :value="item.businessLineCode"
           >
             <div class="project-group-option">
               <span class="project-group-option-name">{{ item.groupName }}</span>
@@ -2775,7 +3193,7 @@ onMounted(loadBaseData)
                     v-for="item in projectGroups"
                     :key="item.id"
                     :label="formatProjectGroupOption(item)"
-                    :value="item.groupName"
+                    :value="item.businessLineCode"
                   >
                     <div class="project-group-option">
                       <span class="project-group-option-name">{{ item.groupName }}</span>
@@ -2783,7 +3201,7 @@ onMounted(loadBaseData)
                     </div>
                   </el-option>
                 </el-select>
-                <el-button v-if="developmentAnalysis" @click="reserveZentaoSync">同步禅道</el-button>
+                <el-button v-if="developmentAnalysis && canSyncZentao" @click="reserveZentaoSync">同步禅道</el-button>
               </div>
             </div>
           </div>
@@ -2921,7 +3339,7 @@ onMounted(loadBaseData)
                     </el-table-column>
                     <el-table-column label="操作" width="90" fixed="right">
                       <template #default="{ $index }">
-                        <el-button link type="danger" @click="deleteDevelopmentWorkItem($index)">删除</el-button>
+                        <el-button link type="danger" :disabled="!canEditDevelopmentDraft()" @click="deleteDevelopmentWorkItem($index)">删除</el-button>
                       </template>
                     </el-table-column>
                   </el-table>
@@ -3160,7 +3578,12 @@ onMounted(loadBaseData)
                       <el-descriptions-item label="需求摘要" :span="2">{{ selectedDetail.structuredData.requirementDigest || '-' }}</el-descriptions-item>
                       <el-descriptions-item label="审批标题" :span="2">{{ selectedDetail.structuredData.approvalTitle || '-' }}</el-descriptions-item>
                       <el-descriptions-item label="所在部门">{{ selectedDetail.structuredData.department || '-' }}</el-descriptions-item>
-                      <el-descriptions-item label="业务线">{{ selectedDetail.structuredData.businessLine || '-' }}</el-descriptions-item>
+                      <el-descriptions-item label="业务线">
+                        <span class="copyable-detail-value">
+                          <span>{{ selectedDetail.structuredData.businessLine || '-' }}</span>
+                          <el-button v-if="canUpdateMetadata" link size="small" @click.stop="openBusinessLineDialog">编辑</el-button>
+                        </span>
+                      </el-descriptions-item>
                       <el-descriptions-item v-if="isDevelopmentRequirement(selectedDetail)" label="涉及系统" :span="2">
                         {{ selectedDetail.involvedSystems?.length ? selectedDetail.involvedSystems.join('、') : '-' }}
                       </el-descriptions-item>
@@ -3184,10 +3607,10 @@ onMounted(loadBaseData)
                       <el-empty v-else description="尚未创建正式研发任务" :image-size="72" />
                     </template>
 
-                    <div class="section-title">需求描述</div>
-                    <div class="detail-block">{{ selectedDetail.structuredData.requirementSummary || '-' }}</div>
+	                    <div class="section-title">需求描述</div>
+	                    <div class="detail-block">{{ selectedDetail.structuredData.requirementSummary || '-' }}</div>
 
-                    <template v-if="canGenerateSqlDraft(selectedDetail)">
+	                    <template v-if="canGenerateSqlDraft(selectedDetail)">
                       <div class="section-title">交付数据文件</div>
                       <el-table
                         v-if="deliveryDataAttachments(selectedDetail).length"
@@ -3214,7 +3637,7 @@ onMounted(loadBaseData)
                     <template v-if="isDevelopmentRequirement(selectedDetail)">
                       <div class="section-title section-title--actions">
                         <span>研发协同</span>
-                        <el-button type="primary" plain size="small" @click="copyDevelopmentCollaborationInfo()">
+                        <el-button v-if="canCopyCollaboration" type="primary" plain size="small" @click="copyDevelopmentCollaborationInfo()">
                           复制协同信息
                         </el-button>
                       </div>
@@ -3230,7 +3653,7 @@ onMounted(loadBaseData)
                             >
                               复制
                             </el-button>
-                            <el-button type="primary" :loading="developmentBranchSubmitting" @click="submitDevelopmentBranch">
+                            <el-button v-if="canUpdateMetadata" type="primary" :loading="developmentBranchSubmitting" @click="submitDevelopmentBranch">
                               保存
                             </el-button>
                           </div>
@@ -3246,7 +3669,7 @@ onMounted(loadBaseData)
                             >
                               打开
                             </el-button>
-                            <el-button type="primary" :loading="zentaoSubmitting" @click="submitZentaoLink">
+                            <el-button v-if="canUpdateMetadata" type="primary" :loading="zentaoSubmitting" @click="submitZentaoLink">
                               保存
                             </el-button>
                           </div>
@@ -3338,6 +3761,79 @@ onMounted(loadBaseData)
                 </div>
               </template>
               <el-empty v-else description="尚未抽取出结构化字段" />
+            </el-tab-pane>
+
+            <el-tab-pane :label="formatTodoTabLabel(activeDetailTodoCount)" name="todos">
+              <div class="todo-tab">
+                <div class="section-title section-title--actions">
+                  <span>需求待办</span>
+                  <el-button v-if="canManageTodo" type="primary" plain size="small" @click="openCreateTodoDialog">
+                    新增待办
+                  </el-button>
+                </div>
+                <el-table
+                  v-if="detailTodos.length"
+                  :data="detailTodos"
+                  size="small"
+                  border
+                  class="todo-table"
+                >
+                  <el-table-column prop="title" label="待办标题" min-width="180" show-overflow-tooltip />
+                  <el-table-column prop="content" label="内容" min-width="220" show-overflow-tooltip>
+                    <template #default="{ row }">
+                      {{ row.content || '-' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="96">
+                    <template #default="{ row }">
+                      <el-tag
+                        size="small"
+                        :type="resolveTodoStatusType(row.status)"
+                        :effect="isActiveIntakeTodoStatus(row.status) ? 'dark' : 'plain'"
+                        :class="{ 'todo-status-tag--active': isActiveIntakeTodoStatus(row.status) }"
+                      >
+                        {{ row.status || '-' }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="处理人" width="120">
+                    <template #default="{ row }">
+                      {{ row.assigneeUserName || '-' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="计划处理" width="150">
+                    <template #default="{ row }">
+                      {{ formatDisplayTime(row.plannedAt) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="完成时间" width="150">
+                    <template #default="{ row }">
+                      {{ formatDisplayTime(row.completedAt) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="processResult" label="处理结果" min-width="180" show-overflow-tooltip>
+                    <template #default="{ row }">
+                      {{ row.processResult || '-' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="192" fixed="right">
+                    <template #default="{ row }">
+                      <el-button v-if="canManageTodo" link type="primary" @click="openEditTodoDialog(row)">编辑</el-button>
+                      <el-button v-if="canManageTodo" link type="primary" @click="openTodoStatusDialog(row)">状态</el-button>
+                      <el-button
+                        v-if="canManageTodo"
+                        link
+                        type="danger"
+                        :loading="deletingTodoId === row.id"
+                        @click="deleteTodoFromDetail(row)"
+                      >
+                        删除
+                      </el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <el-empty v-else description="暂无需求待办" :image-size="96" />
+              </div>
             </el-tab-pane>
 
             <el-tab-pane v-if="isDevelopmentRequirement(selectedDetail)" label="需求澄清" name="clarification">
@@ -3536,7 +4032,7 @@ onMounted(loadBaseData)
                           v-for="item in projectGroups"
                           :key="item.id"
                           :label="formatProjectGroupOption(item)"
-                          :value="item.groupName"
+                          :value="item.businessLineCode"
                         >
                           <div class="project-group-option">
                             <span class="project-group-option-name">{{ item.groupName }}</span>
@@ -3544,7 +4040,7 @@ onMounted(loadBaseData)
                           </div>
                         </el-option>
                       </el-select>
-                      <el-button v-if="developmentAnalysis" @click="reserveZentaoSync">同步禅道</el-button>
+                      <el-button v-if="developmentAnalysis && canSyncZentao" @click="reserveZentaoSync">同步禅道</el-button>
                     </div>
                   </div>
                 </div>
@@ -3692,7 +4188,7 @@ onMounted(loadBaseData)
                           </el-table-column>
                           <el-table-column label="操作" width="90" fixed="right">
                             <template #default="{ $index }">
-                              <el-button link type="danger" @click="deleteDevelopmentWorkItem($index)">删除</el-button>
+                              <el-button link type="danger" :disabled="!canEditDevelopmentDraft()" @click="deleteDevelopmentWorkItem($index)">删除</el-button>
                             </template>
                           </el-table-column>
                         </el-table>
@@ -3774,7 +4270,7 @@ onMounted(loadBaseData)
 
               <div class="section-title section-title--actions">
                 <span>截图与附件</span>
-                <el-button type="primary" plain size="small" :loading="attachmentUpdating" @click="openAppendAttachmentPicker">
+                <el-button v-if="canManageAttachment" type="primary" plain size="small" :loading="attachmentUpdating" @click="openAppendAttachmentPicker">
                   新增附件
                 </el-button>
               </div>
@@ -3788,7 +4284,7 @@ onMounted(loadBaseData)
                       <el-button v-if="row.previewable" link type="primary" @click="previewAttachment(row)">预览</el-button>
                       <el-button link type="primary" @click="handleDownload(row)">下载</el-button>
                       <el-button
-                        v-if="row.category !== '数据文件'"
+                        v-if="canManageAttachment && row.category !== '数据文件'"
                         link
                         type="primary"
                         :loading="replacingAttachmentId === row.id"
@@ -3797,7 +4293,7 @@ onMounted(loadBaseData)
                         替换
                       </el-button>
                       <el-button
-                        v-if="row.category !== '数据文件'"
+                        v-if="canManageAttachment && row.category !== '数据文件'"
                         link
                         type="danger"
                         :loading="deletingAttachmentId === row.id"
@@ -3841,6 +4337,120 @@ onMounted(loadBaseData)
     <img v-if="previewKind === 'image'" :src="previewImageUrl" class="preview-image" alt="附件预览" />
     <iframe v-else-if="previewKind === 'pdf'" :src="previewImageUrl" class="preview-frame" title="附件预览" />
     <el-empty v-else description="当前文件暂不支持预览" />
+  </el-dialog>
+
+  <el-dialog v-model="businessLineDialogVisible" title="修改业务线" width="520px" @closed="resetBusinessLineDialog">
+    <el-form label-position="top">
+      <el-form-item label="业务线" required>
+        <el-select v-model="businessLineForm.businessLine" filterable placeholder="请选择业务线" style="width: 100%">
+          <el-option
+            v-for="item in projectGroups.filter((group) => group.enabled)"
+            :key="item.id"
+            :label="formatProjectGroupOption(item)"
+            :value="item.businessLineCode"
+          />
+        </el-select>
+      </el-form-item>
+      <el-alert title="只修改该需求归属业务线，不会自动重跑 AI 评估或迁移已生成的需求文档。" type="info" show-icon :closable="false" />
+    </el-form>
+
+    <template #footer>
+      <el-button @click="businessLineDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="businessLineSubmitting" @click="submitBusinessLine">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="priorityDialogVisible" title="修改优先级" width="420px" @closed="resetPriorityDialog">
+    <el-form label-position="top">
+      <el-form-item label="优先级" required>
+        <el-radio-group v-model="priorityForm.priority">
+          <el-radio-button v-for="item in priorityOptions" :key="item" :label="item" :value="item" />
+        </el-radio-group>
+      </el-form-item>
+    </el-form>
+
+    <template #footer>
+      <el-button @click="priorityDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="prioritySubmitting" @click="submitPriority">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="todoFormVisible" :title="todoFormTitle" width="560px" @closed="resetTodoFormDialog">
+    <el-form label-position="top">
+      <el-form-item label="待办标题" required>
+        <el-input v-model="todoForm.title" maxlength="120" show-word-limit placeholder="请输入待办标题" />
+      </el-form-item>
+      <el-form-item label="待办内容">
+        <el-input
+          v-model="todoForm.content"
+          type="textarea"
+          :rows="4"
+          maxlength="1000"
+          show-word-limit
+          placeholder="补充处理背景、口径或交付要求"
+        />
+      </el-form-item>
+      <el-form-item label="处理人">
+        <el-input v-model="todoForm.assigneeUserName" maxlength="64" placeholder="请输入处理人用户名" />
+      </el-form-item>
+      <el-form-item label="计划处理时间">
+        <el-date-picker
+          v-model="todoForm.plannedAt"
+          type="datetime"
+          style="width: 100%"
+          format="YYYY/MM/DD HH:mm"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+          clearable
+        />
+      </el-form-item>
+    </el-form>
+
+    <template #footer>
+      <el-button @click="todoFormVisible = false">取消</el-button>
+      <el-button type="primary" :loading="todoFormSubmitting" @click="submitTodoForm">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="todoStatusVisible" title="更新待办状态" width="520px" @closed="resetTodoStatusDialog">
+    <el-form label-position="top">
+      <el-form-item label="处理状态" required>
+        <el-select v-model="todoStatusForm.status" style="width: 100%" placeholder="请选择处理状态">
+          <el-option v-for="status in todoStatusOptions" :key="status" :label="status" :value="status" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="处理结果" :required="todoStatusForm.status === '已完成'">
+        <el-input
+          v-model="todoStatusForm.processResult"
+          type="textarea"
+          :rows="4"
+          maxlength="1000"
+          show-word-limit
+          placeholder="状态为已完成时必须填写处理结果"
+        />
+      </el-form-item>
+      <el-form-item label="完成时间">
+        <el-date-picker
+          v-model="todoStatusForm.completedAt"
+          type="datetime"
+          style="width: 100%"
+          format="YYYY/MM/DD HH:mm"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+          :disabled="todoStatusForm.status !== '已完成'"
+          clearable
+        />
+      </el-form-item>
+      <el-alert
+        title="状态改为非已完成时，后端会清空完成时间。"
+        type="info"
+        show-icon
+        :closable="false"
+      />
+    </el-form>
+
+    <template #footer>
+      <el-button @click="todoStatusVisible = false">取消</el-button>
+      <el-button type="primary" :loading="todoStatusSubmitting" @click="submitTodoStatus">保存状态</el-button>
+    </template>
   </el-dialog>
 
   <el-dialog v-model="pauseDemandVisible" title="暂停需求" width="520px" @closed="resetPauseDemandDialog">
@@ -4005,6 +4615,40 @@ onMounted(loadBaseData)
 
 .requirement-copy-button:hover {
   color: var(--el-color-primary);
+}
+
+.active-todo-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid #f59e0b;
+  border-radius: 999px;
+  color: #b45309;
+  background: #fff7ed;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+:deep(.intake-table .el-table__body tr.intake-table-row--active-todo > td:first-child) {
+  box-shadow: inset 4px 0 0 #f59e0b;
+}
+
+:deep(.intake-table .el-table__body tr.intake-table-row--active-todo > td) {
+  background: #fff7ed;
+}
+
+:deep(.intake-table .el-table__body tr.intake-table-row--active-todo:hover > td) {
+  background: #ffedd5;
+}
+
+.todo-status-tag--active {
+  font-weight: 700;
 }
 
 .copyable-detail-value {

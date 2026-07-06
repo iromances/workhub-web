@@ -1,77 +1,35 @@
-import type { IntakeSummary } from '@/types/work-item'
+import type { ProjectProgressReport, ProjectProgressReportDemand, ProjectProgressReportReleasedDemand, ProjectProgressReportSummary } from '@/types/work-item'
 
-import { formatDemandRatio } from './dashboardStats'
-import type {
-  BusinessLineDemandStats,
-  DemandGroup,
-} from './dashboardStats'
-
-export interface ProjectProgressReportSummary {
-  key: string
-  label: string
-  value: number
-  statuses: string[]
-}
-
-export interface ProjectProgressReportDemand {
-  id: number
-  title: string
-  businessLine: string
-  demandStatus: string
-  approvalCode: string
-  proposerName: string
-  receivedAt: string
-}
-
-export interface ProjectProgressReport {
-  title: string
-  generatedAt: string
-  statusNote: string
-  businessLineFilterLabel: string
-  summary: ProjectProgressReportSummary[]
-  businessLineStats: BusinessLineDemandStats[]
-  recentDemands: ProjectProgressReportDemand[]
-}
-
-interface BuildProjectProgressReportParams {
-  generatedAt: Date
-  demandGroups: DemandGroup[]
-  records: IntakeSummary[]
-  businessLineStats: BusinessLineDemandStats[]
-  businessLineFilterLabel?: string
+export interface ReportDemandStatusTheme {
+  color: string
+  background: string
+  border: string
 }
 
 const REPORT_WIDTH = 1280
-const RECENT_DEMAND_LIMIT = 10
 
-export function buildProjectProgressReport(params: BuildProjectProgressReportParams): ProjectProgressReport {
-  const reportStatuses = new Set(params.demandGroups.flatMap((group) => group.statuses))
-  return {
-    title: '项目总体进度报告',
-    generatedAt: formatDateTime(params.generatedAt),
-    statusNote: '待上线包含待验收和待上线',
-    businessLineFilterLabel: params.businessLineFilterLabel || '所有',
-    summary: params.demandGroups.map((group) => ({
-      key: group.key,
-      label: group.label.replace('的需求', ''),
-      value: params.records.filter((record) => group.statuses.includes(record.demandStatus)).length,
-      statuses: group.statuses,
-    })),
-    businessLineStats: params.businessLineStats,
-    recentDemands: params.records
-      .filter((record) => reportStatuses.has(record.demandStatus))
-      .sort((left, right) => sortableTime(right) - sortableTime(left))
-      .slice(0, RECENT_DEMAND_LIMIT)
-      .map((record) => ({
-        id: record.id,
-        title: resolveDemandTitle(record),
-        businessLine: record.businessLine?.trim() || '未填写业务线',
-        demandStatus: record.demandStatus || '-',
-        approvalCode: record.approvalCode || '-',
-        proposerName: record.proposerName || record.senderName || '-',
-        receivedAt: formatDisplayTime(record.submittedTime || record.receivedAt),
-      })),
-  }
+const statusThemes: Record<string, ReportDemandStatusTheme> = {
+  已收录: { color: '#35566d', background: '#eaf4fb', border: '#bfd8eb' },
+  待澄清: { color: '#7c3aed', background: '#f3ecff', border: '#d8c2ff' },
+  待处理: { color: '#8a4b00', background: '#fff6df', border: '#f2d28a' },
+  处理中: { color: '#0f766e', background: '#e2f8f2', border: '#aee5d6' },
+  待评估: { color: '#9a5b00', background: '#fff3dc', border: '#f3d18f' },
+  待排期: { color: '#0f4db8', background: '#e8f0ff', border: '#bed2ff' },
+  待设计: { color: '#5e3ab3', background: '#f1eafe', border: '#d7c6fb' },
+  开发中: { color: '#0f4db8', background: '#e8f0ff', border: '#bed2ff' },
+  测试中: { color: '#0f766e', background: '#ddf9f2', border: '#ace9db' },
+  待验收: { color: '#b45309', background: '#fff1e4', border: '#f5cda5' },
+  待上线: { color: '#a61b58', background: '#fde7f1', border: '#f3bfd4' },
+}
+
+const defaultStatusTheme: ReportDemandStatusTheme = {
+  color: '#516071',
+  background: '#eef2f6',
+  border: '#d7dee6',
+}
+
+export function resolveReportDemandStatusTheme(status: string | null | undefined): ReportDemandStatusTheme {
+  return statusThemes[status || ''] || defaultStatusTheme
 }
 
 export function buildProjectProgressReportFileName(date: Date): string {
@@ -139,22 +97,22 @@ function renderProjectProgressReportCanvas(report: ProjectProgressReport): HTMLC
   drawSummaryCards(context, report.summary, contentX, cursorY, contentWidth)
   cursorY += 180
 
-  drawSectionTitle(context, '业务线进度', `统计范围：${report.businessLineFilterLabel} · 口径：未启动 / 开发中 / 测试中 / 待上线`, contentX, cursorY, contentWidth)
+  drawSectionTitle(context, '本周上线需求', `按实际上线日期统计，共 ${report.weeklyReleasedDemands.length} 条`, contentX, cursorY, contentWidth)
   cursorY += 48
-  cursorY = drawBusinessLineTable(context, report.businessLineStats, contentX, cursorY, contentWidth)
-  cursorY += 32
+  drawWeeklyReleasedDemands(context, report.weeklyReleasedDemands, contentX, cursorY, contentWidth)
+  cursorY += Math.max(report.weeklyReleasedDemands.length, 1) * 78 + 32
 
-  drawSectionTitle(context, '最近推进需求', `最多展示 ${RECENT_DEMAND_LIMIT} 条`, contentX, cursorY, contentWidth)
+  drawSectionTitle(context, '未上线需求', `展示全部未上线需求，共 ${report.pendingReleaseDemands.length} 条`, contentX, cursorY, contentWidth)
   cursorY += 48
-  drawRecentDemands(context, report.recentDemands, contentX, cursorY, contentWidth)
+  drawPendingReleaseDemands(context, report.pendingReleaseDemands, contentX, cursorY, contentWidth)
 
   return canvas
 }
 
 function calculateReportHeight(report: ProjectProgressReport): number {
-  const businessLineRows = Math.max(report.businessLineStats.length, 1)
-  const demandRows = Math.max(report.recentDemands.length, 1)
-  return 40 + 112 + 32 + 180 + 48 + 46 + businessLineRows * 46 + 32 + 48 + demandRows * 74 + 58
+  const releasedRows = Math.max(report.weeklyReleasedDemands.length, 1)
+  const demandRows = Math.max(report.pendingReleaseDemands.length, 1)
+  return 40 + 112 + 32 + 180 + 48 + releasedRows * 78 + 32 + 48 + demandRows * 78 + 58
 }
 
 function drawSummaryCards(context: CanvasRenderingContext2D, summary: ProjectProgressReportSummary[], x: number, y: number, width: number) {
@@ -175,70 +133,45 @@ function drawSectionTitle(context: CanvasRenderingContext2D, title: string, note
   drawText(context, note, x + width - 320, y + 7, 13, 500, '#64748b')
 }
 
-function drawBusinessLineTable(context: CanvasRenderingContext2D, stats: BusinessLineDemandStats[], x: number, y: number, width: number): number {
-  const columns = [260, 104, 104, 104, 104, 104, 104, width - 884]
-  const headers = ['业务线', '未启动', '开发中', '测试中', '待上线', '阶段合计', '需求数', '需求占比']
-  let cursorX = x
-  context.fillStyle = '#f1f5f9'
-  context.fillRect(x, y, width, 46)
-  headers.forEach((header, index) => {
-    strokeCell(context, cursorX, y, columns[index], 46)
-    drawText(context, header, cursorX + (index === 0 ? 14 : columns[index] - context.measureText(header).width - 14), y + 14, 13, 900, '#475569')
-    cursorX += columns[index]
-  })
-
-  const rows = stats.length ? stats : [{
-    businessLine: '暂无业务线需求统计',
-    notStartedCount: 0,
-    developingCount: 0,
-    testingCount: 0,
-    pendingReleaseCount: 0,
-    totalCount: 0,
-    demandCount: 0,
-    demandRatio: 0,
-  }]
-  let cursorY = y + 46
-  rows.forEach((row) => {
-    cursorX = x
-    const values = [
-      row.businessLine,
-      row.notStartedCount,
-      row.developingCount,
-      row.testingCount,
-      row.pendingReleaseCount,
-      row.totalCount,
-      row.demandCount,
-      formatDemandRatio(row.demandRatio),
-    ]
-    values.forEach((value, index) => {
-      strokeCell(context, cursorX, cursorY, columns[index], 46)
-      const text = String(value)
-      const displayText = index === 0 ? ellipsizeText(context, text, columns[index] - 28) : text
-      const textX = index === 0 ? cursorX + 14 : cursorX + columns[index] - context.measureText(displayText).width - 14
-      drawText(context, displayText, textX, cursorY + 15, 13, index === 0 ? 700 : 500, index === 0 ? '#0f172a' : '#334155')
-      cursorX += columns[index]
-    })
-    cursorY += 46
-  })
-  return cursorY
-}
-
-function drawRecentDemands(context: CanvasRenderingContext2D, demands: ProjectProgressReportDemand[], x: number, y: number, width: number) {
+function drawPendingReleaseDemands(context: CanvasRenderingContext2D, demands: ProjectProgressReportDemand[], x: number, y: number, width: number) {
   if (!demands.length) {
     drawRoundedRect(context, x, y, width, 74, 14, '#ffffff', '#cbd5e1')
-    drawText(context, '当前没有待推进的需求', x + width / 2 - 70, y + 28, 14, 600, '#94a3b8')
+    drawText(context, '当前没有未上线需求', x + width / 2 - 63, y + 28, 14, 600, '#94a3b8')
     return
   }
   let cursorY = y
   demands.forEach((demand) => {
-    drawRoundedRect(context, x, cursorY, width, 64, 14, '#ffffff', '#e2e8f0')
-    drawText(context, ellipsizeText(context, demand.title, 760), x + 16, cursorY + 12, 15, 900, '#0f172a')
+    const theme = resolveReportDemandStatusTheme(demand.demandStatus)
     const statusWidth = Math.max(context.measureText(demand.demandStatus).width + 24, 66)
-    drawRoundedRect(context, x + width - statusWidth - 16, cursorY + 11, statusWidth, 24, 12, '#ccfbf1', '#5eead4')
-    drawText(context, demand.demandStatus, x + width - statusWidth - 4, cursorY + 16, 12, 800, '#0f766e')
+    drawRoundedRect(context, x, cursorY, width, 68, 14, '#ffffff', '#e2e8f0')
+    drawCircle(context, x + 22, cursorY + 22, 6, theme.color)
+    drawText(context, ellipsizeText(context, demand.title, width - statusWidth - 92), x + 38, cursorY + 13, 15, 900, '#0f172a')
+    drawRoundedRect(context, x + width - statusWidth - 16, cursorY + 11, statusWidth, 26, 13, theme.background, theme.border)
+    drawText(context, demand.demandStatus, x + width - statusWidth - 4, cursorY + 17, 12, 800, theme.color)
     const meta = `审批编号：${demand.approvalCode} · 提出人：${demand.proposerName} · 业务线：${demand.businessLine} · ${demand.receivedAt}`
-    drawText(context, ellipsizeText(context, meta, width - 32), x + 16, cursorY + 40, 12, 500, '#64748b')
-    cursorY += 74
+    drawText(context, ellipsizeText(context, meta, width - 38), x + 38, cursorY + 43, 12, 500, '#64748b')
+    cursorY += 78
+  })
+}
+
+function drawWeeklyReleasedDemands(context: CanvasRenderingContext2D, demands: ProjectProgressReportReleasedDemand[], x: number, y: number, width: number) {
+  if (!demands.length) {
+    drawRoundedRect(context, x, y, width, 74, 14, '#ffffff', '#cbd5e1')
+    drawText(context, '本周没有已上线需求', x + width / 2 - 63, y + 28, 14, 600, '#94a3b8')
+    return
+  }
+  let cursorY = y
+  demands.forEach((demand) => {
+    const theme = resolveReportDemandStatusTheme(demand.demandStatus)
+    const statusWidth = Math.max(context.measureText(demand.demandStatus).width + 24, 66)
+    drawRoundedRect(context, x, cursorY, width, 68, 14, '#ffffff', '#e2e8f0')
+    drawCircle(context, x + 22, cursorY + 22, 6, '#16a34a')
+    drawText(context, ellipsizeText(context, demand.title, width - statusWidth - 92), x + 38, cursorY + 13, 15, 900, '#0f172a')
+    drawRoundedRect(context, x + width - statusWidth - 16, cursorY + 11, statusWidth, 26, 13, theme.background, theme.border)
+    drawText(context, demand.demandStatus, x + width - statusWidth - 4, cursorY + 17, 12, 800, theme.color)
+    const meta = `审批编号：${demand.approvalCode} · 提出人：${demand.proposerName} · 业务线：${demand.businessLine} · 上线日期：${demand.releasedTime}`
+    drawText(context, ellipsizeText(context, meta, width - 38), x + 38, cursorY + 43, 12, 500, '#64748b')
+    cursorY += 78
   })
 }
 
@@ -263,10 +196,11 @@ function ellipsizeText(context: CanvasRenderingContext2D, text: string, maxWidth
   return `${result}...`
 }
 
-function strokeCell(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number) {
-  context.strokeStyle = '#e2e8f0'
-  context.lineWidth = 1
-  context.strokeRect(x, y, width, height)
+function drawCircle(context: CanvasRenderingContext2D, x: number, y: number, radius: number, fill: string) {
+  context.beginPath()
+  context.arc(x, y, radius, 0, Math.PI * 2)
+  context.fillStyle = fill
+  context.fill()
 }
 
 function drawRoundedRect(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number, fill: string, stroke?: string) {
@@ -293,21 +227,6 @@ function roundedRectPath(context: CanvasRenderingContext2D, x: number, y: number
   context.lineTo(x, y + normalizedRadius)
   context.quadraticCurveTo(x, y, x + normalizedRadius, y)
   context.closePath()
-}
-
-function resolveDemandTitle(record: IntakeSummary): string {
-  return record.requirementDigest || record.requirementName || record.approvalCode || '未命名需求'
-}
-
-function sortableTime(record: IntakeSummary): number {
-  return new Date(record.submittedTime || record.receivedAt).getTime()
-}
-
-function formatDisplayTime(value: string | null | undefined): string {
-  if (!value) {
-    return '-'
-  }
-  return value.replace('T', ' ')
 }
 
 function formatDateTime(date: Date): string {

@@ -11,9 +11,11 @@ import {
   updateMcpResource,
 } from '@/api/mcp'
 import { fetchProjectGroups, fetchSelectableProjectInvolvedSystems } from '@/api/project'
+import { useAuthStore } from '@/stores/auth'
 import type { McpAuditEntry, McpCatalog, McpResource, McpResourceProfile, McpResourceSaveRequest, McpResourceType } from '@/types/mcp'
 import type { ProjectGroup, ProjectInvolvedSystem } from '@/types/work-item'
 
+const authStore = useAuthStore()
 const loading = ref(false)
 const submitting = ref(false)
 const drawerVisible = ref(false)
@@ -76,6 +78,9 @@ const databaseResources = computed(() => resources.value.filter((item) => item.r
 const serverResources = computed(() => resources.value.filter((item) => item.resourceType === 'SERVER'))
 const catalogText = computed(() => (catalog.value ? JSON.stringify(catalog.value, null, 2) : ''))
 const businessLineOptions = computed(() => businessLines.value.filter((item) => item.enabled))
+const canCreate = computed(() => authStore.hasAnyPermission(['ops:mcp-resource:create', 'ops:mcp-resource:manage']))
+const canUpdate = computed(() => authStore.hasAnyPermission(['ops:mcp-resource:update', 'ops:mcp-resource:manage']))
+const canDelete = computed(() => authStore.hasAnyPermission(['ops:mcp-resource:delete', 'ops:mcp-resource:manage']))
 
 async function loadBusinessLines() {
   try {
@@ -239,8 +244,8 @@ function removeProfile(index: number) {
 }
 
 function validateForm() {
-  if (!form.targetKey.trim() || !form.businessLineCodes.length || !form.environmentCode.trim() || !form.name.trim() || !form.host.trim()) {
-    ElMessage.warning('请填写目标 key、业务线、环境、名称和主机')
+  if (!form.businessLineCodes.length || !form.environmentCode.trim() || !form.host.trim()) {
+    ElMessage.warning('请填写业务线、环境和主机')
     return false
   }
   if (!form.port || form.port <= 0) {
@@ -258,10 +263,6 @@ function validateForm() {
     }
   }
   if (form.resourceType === 'SERVER') {
-    if (!form.systemNames?.length) {
-      ElMessage.warning('服务器资源需选择所属系统')
-      return false
-    }
     if (!form.username?.trim()) {
       ElMessage.warning('服务器资源需填写 SSH 用户')
       return false
@@ -295,11 +296,11 @@ function validateForm() {
 function requestFromForm(): McpResourceSaveRequest {
   return {
     resourceType: form.resourceType,
-    targetKey: form.targetKey.trim(),
+    targetKey: editingId.value ? form.targetKey?.trim() || undefined : undefined,
     businessLineCode: form.businessLineCodes[0],
     businessLineCodes: form.businessLineCodes,
     environmentCode: form.environmentCode.trim(),
-    name: form.name.trim(),
+    name: editingId.value ? form.name?.trim() || undefined : undefined,
     systemName: form.resourceType === 'SERVER' ? form.systemNames?.[0] : undefined,
     systemNames: form.resourceType === 'SERVER' ? form.systemNames?.filter(Boolean) || [] : undefined,
     host: form.host.trim(),
@@ -401,7 +402,7 @@ watch(
       </div>
       <div class="header-actions">
         <el-button @click="openCatalog">预览 Catalog</el-button>
-        <el-button type="primary" @click="openCreate(activeTab === 'SERVER' ? 'SERVER' : 'DATABASE')">
+        <el-button v-if="canCreate" type="primary" @click="openCreate(activeTab === 'SERVER' ? 'SERVER' : 'DATABASE')">
           新增目标
         </el-button>
       </div>
@@ -421,7 +422,7 @@ watch(
             v-for="line in businessLineOptions"
             :key="line.id"
             :label="line.businessLineName"
-            :value="line.businessLineName"
+            :value="line.businessLineCode"
           />
         </el-select>
       </el-form-item>
@@ -474,8 +475,8 @@ watch(
           </el-table-column>
           <el-table-column label="操作" width="140">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-button link type="danger" @click="remove(row)">删除</el-button>
+              <el-button v-if="canUpdate" link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="canDelete" link type="danger" @click="remove(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -533,8 +534,8 @@ watch(
           </el-table-column>
           <el-table-column label="操作" width="140">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-button link type="danger" @click="remove(row)">删除</el-button>
+              <el-button v-if="canUpdate" link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="canDelete" link type="danger" @click="remove(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -597,7 +598,7 @@ watch(
                 v-for="line in businessLineOptions"
                 :key="line.id"
                 :label="line.businessLineName"
-                :value="line.businessLineName"
+                :value="line.businessLineCode"
               />
             </el-select>
           </el-form-item>
@@ -610,14 +611,16 @@ watch(
           </el-form-item>
         </el-col>
       </el-row>
-      <el-form-item label="目标 key" required>
-        <el-input v-model="form.targetKey" placeholder="workhub-db-test / workhub-server-test" />
-      </el-form-item>
-      <el-form-item label="名称" required>
-        <el-input v-model="form.name" />
-      </el-form-item>
-      <el-form-item v-if="form.resourceType === 'SERVER'" label="所属系统" required>
-        <el-select v-model="form.systemNames" multiple filterable style="width: 100%" placeholder="选择当前业务线下的系统">
+      <el-alert
+        v-if="!editingId"
+        class="generated-target-alert"
+        title="目标 key 和名称将在保存后自动生成"
+        type="info"
+        show-icon
+        :closable="false"
+      />
+      <el-form-item v-if="form.resourceType === 'SERVER'" label="所属系统">
+        <el-select v-model="form.systemNames" multiple filterable style="width: 100%" placeholder="不选择则默认覆盖所选业务线下所有系统">
           <el-option
             v-for="system in systemOptions"
             :key="system.id"
@@ -681,7 +684,7 @@ watch(
             filterable
             allow-create
             default-first-option
-            placeholder="允许 systemctl status / journalctl 读取的服务名"
+            placeholder="留空表示不限制服务名"
             style="width: 100%"
           />
         </el-form-item>
@@ -692,7 +695,7 @@ watch(
             filterable
             allow-create
             default-first-option
-            placeholder="允许 tail 读取的完整日志路径"
+            placeholder="留空表示不限制日志路径"
             style="width: 100%"
           />
         </el-form-item>
@@ -800,6 +803,10 @@ watch(
 
 .drawer-form {
   padding-right: 8px;
+}
+
+.generated-target-alert {
+  margin-bottom: 16px;
 }
 
 .profile-row {

@@ -176,13 +176,13 @@ export interface PaymentBindingRelationSaveRequest {
 
 export interface PaymentProjectBinding {
   id: number
-  projectId: number
+  projectId: number | null
   businessLineCode: string
   businessLineName: string
   businessLine: string
   projectGroup: string
-  projectCode: string
-  projectName: string
+  projectCode: string | null
+  projectName: string | null
   merchantId: number
   merchantCode: string
   merchantName: string
@@ -202,7 +202,8 @@ export interface PaymentProjectBinding {
 }
 
 export interface PaymentProjectBindingSaveRequest {
-  projectId: number
+  projectId?: number | null
+  businessLine: string
   merchantId: number
   purposeCode: string
   purposeCodes?: string[]

@@ -42,11 +42,11 @@ export interface McpResource {
 
 export interface McpResourceSaveRequest {
   resourceType: McpResourceType
-  targetKey: string
+  targetKey?: string
   businessLineCode?: string
   businessLineCodes: string[]
   environmentCode: string
-  name: string
+  name?: string
   systemName?: string
   systemNames?: string[]
   host: string

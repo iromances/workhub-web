@@ -14,8 +14,10 @@ import {
   transitionWorkItem,
   updateWorkItem,
 } from '@/api/work-item'
+import { useAuthStore } from '@/stores/auth'
 import type { ProjectSummary, WorkItemDetail, WorkItemFollowUp, WorkItemSummary, WorkItemTransition } from '@/types/work-item'
 
+const authStore = useAuthStore()
 const loading = ref(false)
 const detailLoading = ref(false)
 const workItems = ref<WorkItemSummary[]>([])
@@ -85,6 +87,11 @@ const transitionForm = reactive({
 })
 
 const transitionOptions = computed(() => resolveTransitionOptions(selectedDetail.value?.status))
+const canCreate = computed(() => authStore.hasAnyPermission(['work-item:create', 'work-item:manage']))
+const canUpdate = computed(() => authStore.hasAnyPermission(['work-item:update', 'work-item:manage']))
+const canAssign = computed(() => authStore.hasAnyPermission(['work-item:assign', 'work-item:manage']))
+const canFollowUp = computed(() => authStore.hasAnyPermission(['work-item:follow-up', 'work-item:manage']))
+const canTransition = computed(() => authStore.hasPermission('work-item:transition'))
 
 function trimValue(value: string | null | undefined) {
   return value?.trim() || ''
@@ -384,7 +391,7 @@ onMounted(async () => {
         <h1 class="page-title">工作项</h1>
         <p class="page-desc">需求、缺陷、运维、任务统一在一个模型中流转。</p>
       </div>
-      <el-button type="primary" @click="openCreate">新建工作项</el-button>
+      <el-button v-if="canCreate" type="primary" @click="openCreate">新建工作项</el-button>
     </div>
 
     <el-form inline @submit.prevent="loadWorkItems">
@@ -433,8 +440,8 @@ onMounted(async () => {
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="showDetail(row.id)">详情</el-button>
-          <el-button link type="primary" @click="openEdit(row.id)">编辑</el-button>
-          <el-button link type="primary" @click="openTransition(row)">流转</el-button>
+          <el-button v-if="canUpdate" link type="primary" @click="openEdit(row.id)">编辑</el-button>
+          <el-button v-if="canTransition" link type="primary" @click="openTransition(row)">流转</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -452,8 +459,8 @@ onMounted(async () => {
       <template #default>
         <template v-if="selectedDetail">
           <div class="detail-actions">
-            <el-button type="primary" plain @click="openAssign(selectedDetail)">指派</el-button>
-            <el-button type="primary" :disabled="!transitionOptions.length" @click="openTransition(selectedDetail)">状态流转</el-button>
+            <el-button v-if="canAssign" type="primary" plain @click="openAssign(selectedDetail)">指派</el-button>
+            <el-button v-if="canTransition" type="primary" :disabled="!transitionOptions.length" @click="openTransition(selectedDetail)">状态流转</el-button>
           </div>
 
           <el-tabs v-model="activeDetailTab">
@@ -475,7 +482,7 @@ onMounted(async () => {
             </el-tab-pane>
 
             <el-tab-pane label="跟踪记录" name="follow-ups">
-              <el-form label-position="top" class="follow-up-form">
+              <el-form v-if="canFollowUp" label-position="top" class="follow-up-form">
                 <el-form-item label="新增跟踪记录">
                   <el-input v-model="followUpForm.content" type="textarea" :rows="3" />
                 </el-form-item>

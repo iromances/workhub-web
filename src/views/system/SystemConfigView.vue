@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 
 import {
   createSystemConfig,
   fetchSystemConfigs,
   updateSystemConfig,
 } from '@/api/system-config'
+import { useAuthStore } from '@/stores/auth'
 import type { SysConfigItem } from '@/types/work-item'
 
+const authStore = useAuthStore()
 const loading = ref(false)
 const submitting = ref(false)
 const dialogVisible = ref(false)
@@ -27,6 +29,8 @@ const form = reactive({
   enabled: true,
   remark: '',
 })
+const canCreate = computed(() => authStore.hasAnyPermission(['system:config:create', 'system:config:manage']))
+const canUpdate = computed(() => authStore.hasAnyPermission(['system:config:update', 'system:config:manage']))
 
 async function loadConfigs() {
   loading.value = true
@@ -113,7 +117,7 @@ onMounted(loadConfigs)
         <h1 class="page-title">系统配置</h1>
         <p class="page-desc">配置 GitLab 仓库地址、Access Token 等系统参数；敏感值只脱敏展示。</p>
       </div>
-      <el-button type="primary" @click="openCreate">新增配置</el-button>
+      <el-button v-if="canCreate" type="primary" @click="openCreate">新增配置</el-button>
     </div>
 
     <el-alert
@@ -158,7 +162,7 @@ onMounted(loadConfigs)
       </el-table-column>
       <el-table-column label="操作" width="100">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canUpdate" link type="primary" @click="openEdit(row)">编辑</el-button>
         </template>
       </el-table-column>
     </el-table>

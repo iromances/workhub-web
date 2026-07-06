@@ -1,13 +1,17 @@
 import type { ApiResponse, PageResponse } from '@/types/http'
-import type { DevelopmentAnalysisResponse, IntakeClarificationAnalysisResponse, IntakeDetail, IntakeRequirementFolder, IntakeStageActionRequest, IntakeSummary } from '@/types/work-item'
+import type { DemandTypeFilter, DevelopmentAnalysisResponse, IntakeBusinessLineUpdateRequest, IntakeClarificationAnalysisResponse, IntakeDashboard, IntakeDetail, IntakeRequirementFolder, IntakeStageActionRequest, IntakeSummary, IntakeTodo, IntakeTodoCreateRequest, IntakeTodoStatusRequest, IntakeTodoUpdateRequest } from '@/types/work-item'
 
 import http from './http'
+export { buildIntakeTodoPath, buildIntakeTodoStatusPath, buildIntakeTodosPath } from './intakeTodoPaths'
+import { buildIntakeTodoPath, buildIntakeTodoStatusPath, buildIntakeTodosPath } from './intakeTodoPaths'
 
 export async function fetchIntakeRecords(params?: {
   status?: string
   requirementName?: string
   approvalCode?: string
   proposerName?: string
+  businessLine?: string
+  requirementType?: string
   demandStatus?: string
   releasedStartDate?: string
   releasedEndDate?: string
@@ -18,15 +22,44 @@ export async function fetchIntakeRecords(params?: {
   return response.data.data
 }
 
+export async function fetchIntakeDashboard(demandType: DemandTypeFilter = 'ALL'): Promise<IntakeDashboard> {
+  const response = await http.get<ApiResponse<IntakeDashboard>>('/intake/dashboard', { params: { demandType } })
+  return response.data.data
+}
+
 export async function fetchIntakeDetail(id: number, recordView = true): Promise<IntakeDetail> {
   const response = await http.get<ApiResponse<IntakeDetail>>(`/intake/${id}`, { params: { recordView } })
   return response.data.data
 }
 
+export async function fetchIntakeTodos(id: number): Promise<PageResponse<IntakeTodo>> {
+  const response = await http.get<ApiResponse<PageResponse<IntakeTodo>>>(buildIntakeTodosPath(id))
+  return response.data.data
+}
+
+export async function createIntakeTodo(id: number, request: IntakeTodoCreateRequest): Promise<IntakeTodo> {
+  const response = await http.post<ApiResponse<IntakeTodo>>(buildIntakeTodosPath(id), request)
+  return response.data.data
+}
+
+export async function updateIntakeTodo(id: number, todoId: number, request: IntakeTodoUpdateRequest): Promise<IntakeTodo> {
+  const response = await http.put<ApiResponse<IntakeTodo>>(buildIntakeTodoPath(id, todoId), request)
+  return response.data.data
+}
+
+export async function updateIntakeTodoStatus(id: number, todoId: number, request: IntakeTodoStatusRequest): Promise<IntakeTodo> {
+  const response = await http.post<ApiResponse<IntakeTodo>>(buildIntakeTodoStatusPath(id, todoId), request)
+  return response.data.data
+}
+
+export async function deleteIntakeTodo(id: number, todoId: number): Promise<void> {
+  await http.delete<ApiResponse<void>>(buildIntakeTodoPath(id, todoId))
+}
+
 export async function createUploadIntake(formData: FormData): Promise<IntakeDetail> {
   const projectGroup = formData.get('projectGroup')
-  if (typeof projectGroup === 'string' && projectGroup && !formData.has('businessLine')) {
-    formData.append('businessLine', projectGroup)
+  if (typeof projectGroup === 'string' && projectGroup && !formData.has('businessLineCode')) {
+    formData.append('businessLineCode', projectGroup)
   }
   const response = await http.post<ApiResponse<IntakeDetail>>('/intake/upload', formData)
   return response.data.data
@@ -70,6 +103,16 @@ export async function updateIntakeZentaoLink(id: number, zentaoUrl: string): Pro
 
 export async function updateIntakeDevelopmentBranch(id: number, developmentBranchName: string): Promise<IntakeDetail> {
   const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/development-branch`, { developmentBranchName })
+  return response.data.data
+}
+
+export async function updateIntakeBusinessLine(id: number, request: IntakeBusinessLineUpdateRequest): Promise<IntakeDetail> {
+  const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/business-line`, request)
+  return response.data.data
+}
+
+export async function updateIntakePriority(id: number, request: { priority: string }): Promise<IntakeDetail> {
+  const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/priority`, request)
   return response.data.data
 }
 

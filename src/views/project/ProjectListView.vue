@@ -89,6 +89,17 @@ const currentSection = computed(() => {
   }
   return 'projects'
 })
+const canCreateProject = computed(() => authStore.hasAnyPermission(['project:project:create', 'project:project:manage']))
+const canUpdateProject = computed(() => authStore.hasAnyPermission(['project:project:update', 'project:project:manage']))
+const canDeleteProject = computed(() => authStore.hasAnyPermission(['project:project:delete', 'project:project:manage']))
+const canCreateBusinessLine = computed(() => authStore.hasAnyPermission(['project:business-line:create', 'project:business-line:manage']))
+const canUpdateBusinessLine = computed(() => authStore.hasAnyPermission(['project:business-line:update', 'project:business-line:manage']))
+const canDeleteBusinessLine = computed(() => authStore.hasAnyPermission(['project:business-line:delete', 'project:business-line:manage']))
+const canSyncBusinessLineSystems = computed(() => authStore.hasAnyPermission(['project:business-line:sync-system', 'project:business-line:manage']))
+const canViewBusinessLineSystems = computed(() => authStore.hasAnyPermission(['project:system:view', 'project:system:manage', 'project:business-line:manage']))
+const canCreateSystem = computed(() => authStore.hasAnyPermission(['project:system:create', 'project:system:manage', 'project:business-line:manage']))
+const canUpdateSystem = computed(() => authStore.hasAnyPermission(['project:system:update', 'project:system:manage', 'project:business-line:manage']))
+const canDeleteSystem = computed(() => authStore.hasAnyPermission(['project:system:delete', 'project:system:manage', 'project:business-line:manage']))
 
 async function loadProjects() {
   loading.value = true
@@ -207,7 +218,7 @@ async function openEditDialog(project: ProjectSummary) {
     createForm.code = detail.code
     createForm.name = detail.name
     createForm.type = detail.type
-    createForm.group = detail.group
+    createForm.group = detail.businessLineCode || detail.group
     createForm.ownerUserName = detail.ownerUserName
     createForm.status = detail.status
     createForm.description = detail.description || ''
@@ -252,7 +263,7 @@ function openMiddleSystemDialog() {
 function openSystemEditDialog(system: ProjectInvolvedSystem) {
   editingSystemId.value = system.id
   systemForm.systemScope = system.systemScope
-  systemForm.projectGroup = system.projectGroup
+  systemForm.projectGroup = system.businessLineCode || system.projectGroup
   systemForm.systemName = system.systemName
   systemForm.description = system.description || ''
   systemForm.enabled = system.enabled
@@ -262,9 +273,9 @@ function openSystemEditDialog(system: ProjectInvolvedSystem) {
 
 async function openProjectGroupSystemsDialog(group: ProjectGroup) {
   currentSystemProjectGroupId.value = group.id
-  currentSystemProjectGroup.value = group.groupName
+  currentSystemProjectGroup.value = group.businessLineCode
   projectGroupSystemDialogVisible.value = true
-  await loadProjectGroupSystems(group.groupName)
+  await loadProjectGroupSystems(group.businessLineCode)
 }
 
 function openProjectGroupSystemCreateDialog() {
@@ -455,7 +466,7 @@ async function handleDeleteSystem(system: ProjectInvolvedSystem) {
     await deleteProjectInvolvedSystem(system.id)
     ElMessage.success('涉及系统已删除')
     if (system.systemScope === 'PROJECT_GROUP') {
-      await loadProjectGroupSystems(system.projectGroup)
+      await loadProjectGroupSystems(system.businessLineCode || system.projectGroup)
     } else {
       await loadMiddlePlatformSystems()
     }
@@ -480,7 +491,7 @@ onMounted(async () => {
         <p class="page-desc">所有工作项必须归属项目，运维事项也不例外。</p>
       </div>
       <div class="header-actions">
-        <el-button type="primary" @click="openCreateDialog">新增项目</el-button>
+        <el-button v-if="canCreateProject" type="primary" @click="openCreateDialog">新增项目</el-button>
       </div>
     </div>
 
@@ -499,7 +510,7 @@ onMounted(async () => {
             v-for="item in projectGroups"
             :key="item.id"
             :label="formatProjectGroupOption(item)"
-            :value="item.groupName"
+            :value="item.businessLineCode"
           />
         </el-select>
       </el-form-item>
@@ -534,8 +545,8 @@ onMounted(async () => {
       <el-table-column prop="status" label="状态" width="120" />
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
-          <el-button link type="danger" @click="handleDeleteProject(row)">删除</el-button>
+          <el-button v-if="canUpdateProject" link type="primary" @click="openEditDialog(row)">编辑</el-button>
+          <el-button v-if="canDeleteProject" link type="danger" @click="handleDeleteProject(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -575,7 +586,7 @@ onMounted(async () => {
             v-for="item in projectGroups"
             :key="item.id"
             :label="formatProjectGroupOption(item)"
-            :value="item.groupName"
+            :value="item.businessLineCode"
           >
             <div class="project-group-option">
               <span class="project-group-option-name">{{ item.groupName }}</span>
@@ -611,7 +622,7 @@ onMounted(async () => {
         <h1 class="page-title">业务线</h1>
         <p class="section-desc">维护业务线与 GitLab 组名，AI 任务评估会用它辅助匹配代码仓库。</p>
       </div>
-      <el-button @click="openGroupDialog">新增业务线</el-button>
+      <el-button v-if="canCreateBusinessLine" @click="openGroupDialog">新增业务线</el-button>
     </div>
     <el-table :data="businessLines">
       <el-table-column prop="groupName" label="业务线" min-width="180" />
@@ -624,9 +635,9 @@ onMounted(async () => {
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openGroupEditDialog(row)">编辑</el-button>
-          <el-button link type="primary" @click="openProjectGroupSystemsDialog(row)">系统</el-button>
-          <el-button link type="danger" @click="handleDeleteGroup(row)">删除</el-button>
+          <el-button v-if="canUpdateBusinessLine" link type="primary" @click="openGroupEditDialog(row)">编辑</el-button>
+          <el-button v-if="canViewBusinessLineSystems" link type="primary" @click="openProjectGroupSystemsDialog(row)">系统</el-button>
+          <el-button v-if="canDeleteBusinessLine" link type="danger" @click="handleDeleteGroup(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -651,7 +662,7 @@ onMounted(async () => {
         <h1 class="page-title">中台系统管理</h1>
         <p class="section-desc">所有业务线的研发任务都可以选择启用中的中台系统。</p>
       </div>
-      <el-button @click="openMiddleSystemDialog">新增中台系统</el-button>
+      <el-button v-if="canCreateSystem" @click="openMiddleSystemDialog">新增中台系统</el-button>
     </div>
     <el-table :data="middlePlatformSystems">
       <el-table-column prop="systemName" label="系统名称" min-width="180" />
@@ -664,8 +675,8 @@ onMounted(async () => {
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openSystemEditDialog(row)">编辑</el-button>
-          <el-button link type="danger" @click="handleDeleteSystem(row)">删除</el-button>
+          <el-button v-if="canUpdateSystem" link type="primary" @click="openSystemEditDialog(row)">编辑</el-button>
+          <el-button v-if="canDeleteSystem" link type="danger" @click="handleDeleteSystem(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -691,8 +702,8 @@ onMounted(async () => {
 
   <el-dialog v-model="projectGroupSystemDialogVisible" :title="`业务线系统清单 - ${currentSystemProjectGroup}`" width="760px">
     <div class="dialog-toolbar">
-      <el-button :loading="syncingProjectGroupSystems" @click="syncCurrentProjectGroupSystemsFromGit">从 Git 同步</el-button>
-      <el-button type="primary" @click="openProjectGroupSystemCreateDialog">新增业务线系统</el-button>
+      <el-button v-if="canSyncBusinessLineSystems" :loading="syncingProjectGroupSystems" @click="syncCurrentProjectGroupSystemsFromGit">从 Git 同步</el-button>
+      <el-button v-if="canCreateSystem" type="primary" @click="openProjectGroupSystemCreateDialog">新增业务线系统</el-button>
     </div>
     <el-table :data="projectGroupSystems">
       <el-table-column prop="systemName" label="系统名称" min-width="180" />
@@ -705,8 +716,8 @@ onMounted(async () => {
       </el-table-column>
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openSystemEditDialog(row)">编辑</el-button>
-          <el-button link type="danger" @click="handleDeleteSystem(row)">删除</el-button>
+          <el-button v-if="canUpdateSystem" link type="primary" @click="openSystemEditDialog(row)">编辑</el-button>
+          <el-button v-if="canDeleteSystem" link type="danger" @click="handleDeleteSystem(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

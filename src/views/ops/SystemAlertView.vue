@@ -10,6 +10,7 @@ import {
   updateSystemAlertSubsystem,
 } from '@/api/ops'
 import { fetchProjectGroups } from '@/api/project'
+import { useAuthStore } from '@/stores/auth'
 import type {
   SystemAlertDashboard,
   SystemAlertEvent,
@@ -18,6 +19,7 @@ import type {
 } from '@/types/ops'
 import type { ProjectGroup } from '@/types/work-item'
 
+const authStore = useAuthStore()
 const loading = ref(false)
 const subsystemLoading = ref(false)
 const submitting = ref(false)
@@ -73,6 +75,9 @@ const serviceOptions = computed(() => {
   }
   return Array.from(options.values())
 })
+const canCreate = computed(() => authStore.hasAnyPermission(['ops:system-alert:create', 'ops:system-alert:manage']))
+const canUpdate = computed(() => authStore.hasAnyPermission(['ops:system-alert:update', 'ops:system-alert:manage']))
+const canDelete = computed(() => authStore.hasAnyPermission(['ops:system-alert:delete', 'ops:system-alert:manage']))
 
 function defaultTimeRange(): [string, string] {
   const end = new Date()
@@ -258,7 +263,7 @@ onMounted(async () => {
       </div>
       <div class="header-buttons">
         <el-button @click="loadDashboard">刷新</el-button>
-        <el-button type="primary" @click="openCreate">新增关注子系统</el-button>
+        <el-button v-if="canCreate" type="primary" @click="openCreate">新增关注子系统</el-button>
       </div>
     </div>
 
@@ -269,7 +274,7 @@ onMounted(async () => {
             v-for="line in businessLineOptions"
             :key="line.id"
             :label="line.businessLineName"
-            :value="line.businessLineName"
+            :value="line.businessLineCode"
           />
         </el-select>
       </el-form-item>
@@ -384,8 +389,8 @@ onMounted(async () => {
       <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
       <el-table-column label="操作" width="140" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button v-if="canUpdate" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canDelete" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -399,7 +404,7 @@ onMounted(async () => {
             v-for="line in businessLineOptions"
             :key="line.id"
             :label="line.businessLineName"
-            :value="line.businessLineName"
+            :value="line.businessLineCode"
           />
         </el-select>
       </el-form-item>

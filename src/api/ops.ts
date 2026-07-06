@@ -9,6 +9,7 @@ import type {
   SystemAlertSubsystemSaveRequest,
   XxlJobDashboard,
   XxlJobExecutor,
+  XxlJobLogPage,
 } from '@/types/ops'
 
 import http from './http'
@@ -74,6 +75,22 @@ export async function fetchXxlJobDetail(
   },
 ): Promise<XxlJobDashboard> {
   const response = await http.get<ApiResponse<XxlJobDashboard>>(`/ops/monitors/${id}/xxl-job/detail`, { params })
+  return response.data.data
+}
+
+export async function fetchXxlJobLogs(
+  id: number,
+  params?: {
+    startDate?: string
+    endDate?: string
+    page?: number
+    pageSize?: number
+    author?: string
+    executorAppName?: string
+    logStatus?: 'ALL' | 'FAILED'
+  },
+): Promise<XxlJobLogPage> {
+  const response = await http.get<ApiResponse<XxlJobLogPage>>(`/ops/monitors/${id}/xxl-job/logs`, { params })
   return response.data.data
 }
 

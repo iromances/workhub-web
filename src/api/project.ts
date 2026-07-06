@@ -142,8 +142,10 @@ function normalizeBusinessLine<T extends Partial<ProjectGroup>>(businessLine: T)
   const name = (businessLine as { businessLineName?: string; groupName?: string }).businessLineName
     || (businessLine as { groupName?: string }).groupName
     || ''
+  const code = (businessLine as { businessLineCode?: string }).businessLineCode || name
   return {
     ...businessLine,
+    businessLineCode: code,
     businessLineName: name,
     groupName: name,
   } as T & ProjectGroup
@@ -153,9 +155,11 @@ function normalizeInvolvedSystem<T extends Partial<ProjectInvolvedSystem>>(syste
   const businessLine = (system as { businessLine?: string; projectGroup?: string }).businessLine
     || (system as { projectGroup?: string }).projectGroup
     || ''
+  const businessLineCode = (system as { businessLineCode?: string }).businessLineCode || businessLine
   const systemScope = ((system as { systemScope?: string }).systemScope === 'BUSINESS_LINE' ? 'PROJECT_GROUP' : (system as { systemScope?: string }).systemScope) as ProjectInvolvedSystem['systemScope']
   return {
     ...system,
+    businessLineCode,
     businessLine,
     projectGroup: businessLine,
     systemScope,
@@ -167,7 +171,7 @@ function toProjectPayload(request: ProjectCreateRequest) {
     code: request.code,
     name: request.name,
     type: request.type,
-    businessLine: request.group,
+    businessLineCode: request.group,
     ownerUserName: request.ownerUserName,
     status: request.status,
     description: request.description,
@@ -205,7 +209,8 @@ function toInvolvedSystemPayload(request: ProjectInvolvedSystemSaveRequest) {
   return {
     ...request,
     systemScope: request.systemScope === 'PROJECT_GROUP' ? 'BUSINESS_LINE' : request.systemScope,
-    businessLine: request.businessLine || request.projectGroup,
+    businessLineCode: request.businessLine || request.projectGroup,
     projectGroup: undefined,
+    businessLine: undefined,
   }
 }

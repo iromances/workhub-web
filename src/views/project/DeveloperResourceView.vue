@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 
 import {
   createDeveloperResource,
@@ -8,8 +8,10 @@ import {
   fetchDeveloperResources,
   updateDeveloperResource,
 } from '@/api/system-config'
+import { useAuthStore } from '@/stores/auth'
 import type { DeveloperResource } from '@/types/work-item'
 
+const authStore = useAuthStore()
 const loading = ref(false)
 const submitting = ref(false)
 const dialogVisible = ref(false)
@@ -24,6 +26,9 @@ const form = reactive({
   enabled: true,
   remark: '',
 })
+const canCreate = computed(() => authStore.hasAnyPermission(['project:developer:create', 'project:developer:manage']))
+const canUpdate = computed(() => authStore.hasAnyPermission(['project:developer:update', 'project:developer:manage']))
+const canDelete = computed(() => authStore.hasAnyPermission(['project:developer:delete', 'project:developer:manage']))
 
 async function loadDevelopers() {
   loading.value = true
@@ -111,10 +116,10 @@ onMounted(loadDevelopers)
   <div class="page-card table-card">
     <div class="page-header">
       <div>
-        <h1 class="page-title">研发人员资源</h1>
+        <h1 class="page-title">团队</h1>
         <p class="page-desc">维护任务评估负责人下拉框的独立人员资源，不和项目或业务线绑定。</p>
       </div>
-      <el-button type="primary" @click="openCreate">新增研发人员</el-button>
+      <el-button v-if="canCreate" type="primary" @click="openCreate">新增研发人员</el-button>
     </div>
 
     <el-form inline class="filter-form" @submit.prevent="loadDevelopers">
@@ -142,8 +147,8 @@ onMounted(loadDevelopers)
       </el-table-column>
       <el-table-column label="操作" width="150">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="deleteDeveloper(row)">删除</el-button>
+          <el-button v-if="canUpdate" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canDelete" link type="danger" @click="deleteDeveloper(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

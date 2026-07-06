@@ -1,21 +1,12 @@
 <script setup lang="ts">
 import { Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
-import { fetchIntakeRecords } from '@/api/intake'
-import type { IntakeSummary } from '@/types/work-item'
+import { fetchIntakeDashboard } from '@/api/intake'
+import type { DashboardDemandTypeOption, DemandTypeFilter, IntakeDashboard } from '@/types/work-item'
 
 import {
-  buildBusinessLineStats,
-  businessLineDemandTypeOptions,
-  demandGroups,
-  filterRecordsByDemandType,
-  formatDemandRatio,
-  type DemandTypeFilter,
-} from './dashboardStats'
-import {
-  buildProjectProgressReport,
   buildProjectProgressReportFileName,
   downloadProjectProgressReportScreenshot,
 } from './dashboardReport'
@@ -23,52 +14,30 @@ import {
 const loading = ref(false)
 const reportGenerating = ref(false)
 const businessLineDemandType = ref<DemandTypeFilter>('ALL')
-const intakeRecords = ref<IntakeSummary[]>([])
+const dashboard = ref<IntakeDashboard | null>(null)
 
-const demandCards = computed(() =>
-  demandGroups.map((group) => {
-    const items = intakeRecords.value.filter((item) => group.statuses.includes(item.demandStatus))
-    return {
-      ...group,
-      value: items.length,
-      items: sortDemandItems(items),
-    }
-  }),
-)
+const businessLineDemandTypeOptions: DashboardDemandTypeOption[] = [
+  { value: 'ALL', label: '所有' },
+  { value: 'DEVELOPMENT', label: '研发需求' },
+  { value: 'OPERATIONS', label: '数据运维需求' },
+]
 
-const highlightedDemands = computed(() =>
-  demandCards.value
-    .flatMap((card) => card.items.map((item) => ({
-      ...item,
-      groupLabel: card.label,
-      groupTagClass: card.tagClass,
-    })))
-    .slice(0, 12),
-)
-
-const businessLineRecords = computed(() => filterRecordsByDemandType(intakeRecords.value, businessLineDemandType.value))
-const businessLineStats = computed(() => buildBusinessLineStats(intakeRecords.value, businessLineDemandType.value))
-const businessLineFilterLabel = computed(() => businessLineDemandTypeOptions.find((option) => option.value === businessLineDemandType.value)?.label || '所有')
+const demandCards = computed(() => dashboard.value?.demandCards || [])
+const highlightedDemands = computed(() => dashboard.value?.highlightedDemands || [])
+const businessLineRecordsCount = computed(() => dashboard.value?.businessLineRecordsCount || 0)
+const businessLineStats = computed(() => dashboard.value?.businessLineStats || [])
+const businessLineFilterLabel = computed(() => dashboard.value?.demandTypeLabel || '所有')
 
 async function loadDashboard() {
   loading.value = true
   try {
-    const intakes = await fetchIntakeRecords({ page: 1, pageSize: 1000 })
-    intakeRecords.value = intakes.items
+    dashboard.value = await fetchIntakeDashboard(businessLineDemandType.value)
   } catch (error) {
     ElMessage.error('加载工作台数据失败')
     console.error(error)
   } finally {
     loading.value = false
   }
-}
-
-function sortDemandItems(items: IntakeSummary[]) {
-  return [...items].sort((left, right) => {
-    const leftTime = new Date(left.submittedTime || left.receivedAt).getTime()
-    const rightTime = new Date(right.submittedTime || right.receivedAt).getTime()
-    return rightTime - leftTime
-  })
 }
 
 function formatDisplayTime(value: string | null | undefined) {
@@ -78,8 +47,11 @@ function formatDisplayTime(value: string | null | undefined) {
   return value.replace('T', ' ')
 }
 
-function resolveDemandTitle(item: IntakeSummary) {
-  return item.requirementDigest || item.requirementName || item.approvalCode || '未命名需求'
+function formatDemandRatio(value: number | null | undefined) {
+  if (value == null || Number.isNaN(value)) {
+    return '0.00%'
+  }
+  return `${(value * 100).toFixed(2)}%`
 }
 
 async function generateProgressReportScreenshot() {
@@ -89,14 +61,10 @@ async function generateProgressReportScreenshot() {
   reportGenerating.value = true
   try {
     const generatedAt = new Date()
-    const report = buildProjectProgressReport({
-      generatedAt,
-      demandGroups,
-      records: intakeRecords.value,
-      businessLineStats: businessLineStats.value,
-      businessLineFilterLabel: businessLineFilterLabel.value,
-    })
-    await downloadProjectProgressReportScreenshot(report, buildProjectProgressReportFileName(generatedAt))
+    if (!dashboard.value?.progressReport) {
+      throw new Error('工作台数据尚未加载')
+    }
+    await downloadProjectProgressReportScreenshot(dashboard.value.progressReport, buildProjectProgressReportFileName(generatedAt))
     ElMessage.success('项目总体进度报告截图已生成')
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '生成报告截图失败')
@@ -107,6 +75,7 @@ async function generateProgressReportScreenshot() {
 }
 
 onMounted(loadDashboard)
+watch(businessLineDemandType, loadDashboard)
 </script>
 
 <template>
@@ -142,8 +111,8 @@ onMounted(loadDashboard)
         <div class="page-card content-card">
           <div class="section-header">
             <div>
-              <h3>业务线需求统计</h3>
-              <span>当前范围：{{ businessLineFilterLabel }}，共 {{ businessLineRecords.length }} 个需求；待上线包含待验收和待上线</span>
+              <h3>需求统计</h3>
+              <span>当前范围：{{ businessLineFilterLabel }}，共 {{ businessLineRecordsCount }} 个需求；待上线包含待验收和待上线</span>
             </div>
             <el-radio-group v-model="businessLineDemandType" class="stats-filter" size="small">
               <el-radio-button
@@ -181,10 +150,10 @@ onMounted(loadDashboard)
             <el-timeline-item
               v-for="item in highlightedDemands"
               :key="`${item.groupLabel}-${item.id}`"
-              :timestamp="formatDisplayTime(item.submittedTime || item.receivedAt)"
+              :timestamp="formatDisplayTime(item.receivedAt)"
             >
               <div class="demand-heading">
-                <div class="demand-title">{{ resolveDemandTitle(item) }}</div>
+                <div class="demand-title">{{ item.title }}</div>
                 <div class="demand-tags">
                   <span class="stage-tag" :class="item.groupTagClass">{{ item.groupLabel }}</span>
                   <span class="stage-tag stage-tag--status">{{ item.demandStatus || '-' }}</span>
@@ -196,7 +165,7 @@ onMounted(loadDashboard)
                 <span>需求类型：{{ item.requirementType || '-' }}</span>
                 <span>业务线：{{ item.businessLine || '-' }}</span>
               </div>
-              <div class="demand-note">{{ item.remark || item.requirementSummary || '等待继续推进需求阶段' }}</div>
+              <div class="demand-note">{{ item.note }}</div>
             </el-timeline-item>
           </el-timeline>
           <el-empty v-else description="当前没有待推进的需求" />

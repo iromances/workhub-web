@@ -49,6 +49,7 @@ export async function fetchPaymentMerchants(params?: {
   status?: string
   channelId?: number
   projectId?: number
+  businessLine?: string
   purposeCode?: string
   keyword?: string
   page?: number
@@ -180,11 +181,12 @@ function normalizePaymentBinding<T extends Partial<PaymentProjectBinding>>(bindi
   const businessLine = (binding as { businessLine?: string; projectGroup?: string }).businessLine
     || (binding as { projectGroup?: string }).projectGroup
     || ''
+  const businessLineCode = (binding as { businessLineCode?: string }).businessLineCode || businessLine
   return {
     ...binding,
     businessLine,
-    businessLineCode: (binding as { businessLineCode?: string }).businessLineCode || businessLine,
+    businessLineCode,
     businessLineName: (binding as { businessLineName?: string }).businessLineName || businessLine,
-    projectGroup: businessLine,
+    projectGroup: businessLineCode,
   } as T & PaymentProjectBinding
 }

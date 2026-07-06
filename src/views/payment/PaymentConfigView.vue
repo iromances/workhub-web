@@ -23,6 +23,7 @@ import {
   updatePaymentMerchantParam,
 } from '@/api/payment'
 import { fetchProjectGroups, fetchProjects } from '@/api/project'
+import { useAuthStore } from '@/stores/auth'
 import type {
   PaymentChannelDetail,
   PaymentChannelSaveRequest,
@@ -37,16 +38,16 @@ import type {
 } from '@/types/payment'
 import type { ProjectGroup, ProjectSummary } from '@/types/work-item'
 
+const authStore = useAuthStore()
 const loadingChannels = ref(false)
 const loadingMerchants = ref(false)
-const loadingBindings = ref(false)
 const detailLoading = ref(false)
+const detailBindingsLoading = ref(false)
 const submitting = ref(false)
 const activeTab = ref('channels')
 
 const channels = ref<PaymentChannelSummary[]>([])
 const merchants = ref<PaymentMerchantSummary[]>([])
-const bindings = ref<PaymentProjectBinding[]>([])
 const channelOptions = ref<PaymentChannelSummary[]>([])
 const merchantOptions = ref<PaymentMerchantSummary[]>([])
 const projects = ref<ProjectSummary[]>([])
@@ -65,14 +66,10 @@ const merchantPagination = reactive({
   total: 0,
 })
 
-const bindingPagination = reactive({
-  page: 1,
-  pageSize: 10,
-  total: 0,
-})
-
 const selectedMerchantId = ref<number | null>(null)
 const selectedMerchantDetail = ref<PaymentMerchantDetail | null>(null)
+const selectedMerchantBindings = ref<PaymentProjectBinding[]>([])
+const bindingDialogLockedMerchantId = ref<number | null>(null)
 
 const channelDialogVisible = ref(false)
 const merchantDialogVisible = ref(false)
@@ -98,16 +95,9 @@ const merchantFilters = reactive({
   keyword: '',
   status: '',
   channelId: undefined as number | undefined,
+  businessLine: '',
   projectId: undefined as number | undefined,
   purposeCode: '',
-})
-
-const bindingFilters = reactive({
-  projectGroup: '',
-  projectId: undefined as number | undefined,
-  merchantId: undefined as number | undefined,
-  purposeCode: '',
-  status: '',
 })
 
 const channelForm = reactive<PaymentChannelSaveRequest>({
@@ -131,7 +121,7 @@ const merchantForm = reactive<PaymentMerchantSaveRequest>({
 })
 
 const bindingForm = reactive({
-  projectId: 0,
+  projectId: null as number | null,
   projectGroup: '',
   merchantId: 0,
   purposeCodes: [] as string[],
@@ -192,6 +182,14 @@ const relationRoleOptions = [
   { code: 'REFUND_MAIN', name: '退款主户' },
   { code: 'SUB_MERCHANT', name: '子商户' },
 ]
+const canCreateChannel = computed(() => authStore.hasAnyPermission(['payment:channel:create', 'payment:config:manage']))
+const canUpdateChannel = computed(() => authStore.hasAnyPermission(['payment:channel:update', 'payment:config:manage']))
+const canCreateMerchant = computed(() => authStore.hasAnyPermission(['payment:merchant:create', 'payment:config:manage']))
+const canUpdateMerchant = computed(() => authStore.hasAnyPermission(['payment:merchant:update', 'payment:config:manage']))
+const canManageParam = computed(() => authStore.hasAnyPermission(['payment:param:manage', 'payment:config:manage']))
+const canManageCredential = computed(() => authStore.hasAnyPermission(['payment:credential:manage', 'payment:config:manage']))
+const canManageBinding = computed(() => authStore.hasAnyPermission(['payment:binding:manage', 'payment:config:manage']))
+const canCreateSecret = computed(() => authStore.hasAnyPermission(['payment:secret:create', 'payment:secret:manage']))
 
 const selectedMerchantLabel = computed(() => {
   if (!selectedMerchantDetail.value) {
@@ -204,8 +202,16 @@ function formatProjectOption(project: ProjectSummary) {
   return `${project.code} / ${project.name}`
 }
 
-function formatBusinessOption(business: { group: string; projectCount: number }) {
-  return `${business.group} / ${business.projectCount} 个项目`
+function formatBusinessOption(business: { group: string; name: string; projectCount: number }) {
+  return `${business.name} / ${business.projectCount} 个项目`
+}
+
+function formatBindingProjectName(binding: PaymentProjectBinding) {
+  return binding.projectName || '业务线通用'
+}
+
+function formatBindingProjectCode(binding: PaymentProjectBinding) {
+  return binding.projectCode || '未指定项目'
 }
 
 function formatMerchantOption(merchant: PaymentMerchantSummary) {
@@ -224,6 +230,19 @@ function formatPurposeNames(purposeCodes: string[] | null | undefined, purposeCo
   return codes
     .map((code) => purposes.value.find((purpose) => purpose.code === code)?.name || code)
     .join(' / ')
+}
+
+function formatRelationRole(role: string) {
+  return relationRoleOptions.find((item) => item.code === role)?.name || role
+}
+
+function formatRelationNames(relations: PaymentProjectBinding['relations']) {
+  if (!relations?.length) {
+    return '-'
+  }
+  return relations
+    .map((relation) => `${formatRelationRole(relation.relationRole)}：${relation.merchantName || relation.merchantCode}`)
+    .join('；')
 }
 
 function errorMessage(error: unknown, fallback: string) {
@@ -270,38 +289,39 @@ function formatStatus(status: string | null | undefined) {
 const bindingBusinessOptions = computed(() => {
   const projectCountByBusiness = new Map<string, { projectId: number; projectCount: number }>()
   for (const project of projects.value) {
-    if (!project.group) {
+    if (!project.businessLineCode) {
       continue
     }
-    const existing = projectCountByBusiness.get(project.group)
+    const existing = projectCountByBusiness.get(project.businessLineCode)
     if (existing) {
       existing.projectCount += 1
       continue
     }
-    projectCountByBusiness.set(project.group, { projectId: project.id, projectCount: 1 })
+    projectCountByBusiness.set(project.businessLineCode, { projectId: project.id, projectCount: 1 })
   }
   return businessLines.value.map((businessLine) => {
-    const stats = projectCountByBusiness.get(businessLine.groupName)
+    const stats = projectCountByBusiness.get(businessLine.businessLineCode)
     return {
-      group: businessLine.groupName,
+      group: businessLine.businessLineCode,
+      name: businessLine.groupName,
       projectId: stats?.projectId || 0,
       projectCount: stats?.projectCount || 0,
     }
   })
 })
 
-const bindingFilterProjects = computed(() => {
-  if (!bindingFilters.projectGroup) {
-    return projects.value
-  }
-  return projects.value.filter((project) => project.group === bindingFilters.projectGroup)
-})
-
 const bindingFormProjects = computed(() => {
   if (!bindingForm.projectGroup) {
     return projects.value
   }
-  return projects.value.filter((project) => project.group === bindingForm.projectGroup)
+  return projects.value.filter((project) => project.businessLineCode === bindingForm.projectGroup)
+})
+
+const merchantFilterProjects = computed(() => {
+  if (!merchantFilters.businessLine) {
+    return projects.value
+  }
+  return projects.value.filter((project) => project.businessLineCode === merchantFilters.businessLine)
 })
 
 const selectedBindingMerchant = computed(() => {
@@ -309,6 +329,9 @@ const selectedBindingMerchant = computed(() => {
 })
 
 const selectedBindingMerchantPurposeCodes = computed(() => {
+  if (selectedMerchantDetail.value?.id === bindingForm.merchantId) {
+    return selectedMerchantDetail.value.purposeCodes || []
+  }
   return selectedBindingMerchant.value?.purposeCodes || []
 })
 
@@ -361,6 +384,7 @@ async function loadMerchants() {
       keyword: merchantFilters.keyword || undefined,
       status: merchantFilters.status || undefined,
       channelId: merchantFilters.channelId,
+      businessLine: merchantFilters.businessLine || undefined,
       projectId: merchantFilters.projectId,
       purposeCode: merchantFilters.purposeCode || undefined,
       page: merchantPagination.page,
@@ -376,28 +400,6 @@ async function loadMerchants() {
   }
 }
 
-async function loadBindings() {
-  loadingBindings.value = true
-  try {
-    const response = await fetchPaymentBindings({
-      projectGroup: bindingFilters.projectGroup || undefined,
-      projectId: bindingFilters.projectId,
-      merchantId: bindingFilters.merchantId,
-      purposeCode: bindingFilters.purposeCode || undefined,
-      status: bindingFilters.status || undefined,
-      page: bindingPagination.page,
-      pageSize: bindingPagination.pageSize,
-    })
-    bindings.value = response.items
-    bindingPagination.total = response.total
-  } catch (error) {
-    ElMessage.error('加载项目支付绑定失败')
-    console.error(error)
-  } finally {
-    loadingBindings.value = false
-  }
-}
-
 function searchChannels() {
   channelPagination.page = 1
   void loadChannels()
@@ -408,13 +410,14 @@ function searchMerchants() {
   void loadMerchants()
 }
 
-function searchBindings() {
-  bindingPagination.page = 1
-  void loadBindings()
-}
-
-function handleBindingFilterBusinessChange() {
-  bindingFilters.projectId = undefined
+function handleMerchantBusinessLineChange() {
+  if (!merchantFilters.businessLine || !merchantFilters.projectId) {
+    return
+  }
+  const selectedProject = projects.value.find((project) => project.id === merchantFilters.projectId)
+  if (selectedProject?.businessLineCode !== merchantFilters.businessLine) {
+    merchantFilters.projectId = undefined
+  }
 }
 
 function handleChannelPageChange(page: number) {
@@ -439,27 +442,44 @@ function handleMerchantPageSizeChange(pageSize: number) {
   void loadMerchants()
 }
 
-function handleBindingPageChange(page: number) {
-  bindingPagination.page = page
-  void loadBindings()
-}
-
-function handleBindingPageSizeChange(pageSize: number) {
-  bindingPagination.pageSize = pageSize
-  bindingPagination.page = 1
-  void loadBindings()
-}
-
 async function loadMerchantDetail(id: number) {
   detailLoading.value = true
+  detailBindingsLoading.value = true
   selectedMerchantId.value = id
   try {
-    selectedMerchantDetail.value = await fetchPaymentMerchantDetail(id)
+    const [detail, bindingPage] = await Promise.all([
+      fetchPaymentMerchantDetail(id),
+      fetchPaymentBindings({ merchantId: id, page: 1, pageSize: 1000 }),
+    ])
+    selectedMerchantDetail.value = detail
+    selectedMerchantBindings.value = bindingPage.items
   } catch (error) {
     ElMessage.error('加载商户详情失败')
     console.error(error)
   } finally {
     detailLoading.value = false
+    detailBindingsLoading.value = false
+  }
+}
+
+async function loadSelectedMerchantBindings() {
+  if (!selectedMerchantId.value) {
+    selectedMerchantBindings.value = []
+    return
+  }
+  detailBindingsLoading.value = true
+  try {
+    const response = await fetchPaymentBindings({
+      merchantId: selectedMerchantId.value,
+      page: 1,
+      pageSize: 1000,
+    })
+    selectedMerchantBindings.value = response.items
+  } catch (error) {
+    ElMessage.error('加载商户项目用途绑定失败')
+    console.error(error)
+  } finally {
+    detailBindingsLoading.value = false
   }
 }
 
@@ -527,8 +547,14 @@ function resetMerchantForm() {
 async function openMerchantDialog(id?: number) {
   resetMerchantForm()
   if (id) {
-    const detail = await fetchPaymentMerchantDetail(id)
+    const [detail, bindingPage] = await Promise.all([
+      fetchPaymentMerchantDetail(id),
+      fetchPaymentBindings({ merchantId: id, page: 1, pageSize: 1000 }),
+    ])
     editingMerchantId.value = id
+    selectedMerchantId.value = id
+    selectedMerchantDetail.value = detail
+    selectedMerchantBindings.value = bindingPage.items
     merchantForm.channelId = detail.channelId
     merchantForm.merchantCode = detail.merchantCode
     merchantForm.merchantName = detail.merchantName
@@ -553,7 +579,7 @@ async function submitMerchant() {
       ElMessage.success('支付商户已新增')
     }
     merchantDialogVisible.value = false
-    await Promise.all([loadBaseOptions(), loadMerchants(), loadBindings()])
+    await Promise.all([loadBaseOptions(), loadMerchants(), loadSelectedMerchantBindings()])
   } catch (error) {
     ElMessage.error('保存支付商户失败')
     console.error(error)
@@ -562,14 +588,20 @@ async function submitMerchant() {
   }
 }
 
-function resetBindingForm() {
+function resetBindingForm(lockedMerchantId?: number) {
   editingBindingId.value = null
+  bindingDialogLockedMerchantId.value = lockedMerchantId || null
   const firstBusiness = bindingBusinessOptions.value[0]
-  const firstMerchant = merchantOptions.value.find((merchant) => merchant.purposeCodes?.length) || merchantOptions.value[0]
-  bindingForm.projectId = firstBusiness?.projectId || 0
+  const firstMerchant = lockedMerchantId
+    ? merchantOptions.value.find((merchant) => merchant.id === lockedMerchantId)
+    : merchantOptions.value.find((merchant) => merchant.purposeCodes?.length) || merchantOptions.value[0]
+  bindingForm.projectId = null
   bindingForm.projectGroup = firstBusiness?.group || ''
-  bindingForm.merchantId = firstMerchant?.id || 0
-  bindingForm.purposeCodes = firstMerchant?.purposeCodes?.[0] ? [firstMerchant.purposeCodes[0]] : []
+  bindingForm.merchantId = lockedMerchantId || firstMerchant?.id || 0
+  const purposeCodes = lockedMerchantId && selectedMerchantDetail.value?.id === lockedMerchantId
+    ? selectedMerchantDetail.value.purposeCodes || []
+    : firstMerchant?.purposeCodes || []
+  bindingForm.purposeCodes = purposeCodes[0] ? [purposeCodes[0]] : []
   bindingForm.priority = 1
   bindingForm.defaultBinding = true
   bindingForm.status = 'ACTIVE'
@@ -577,13 +609,13 @@ function resetBindingForm() {
   bindingForm.relations = []
 }
 
-function openBindingDialog(binding?: PaymentProjectBinding) {
-  resetBindingForm()
+function openBindingDialog(binding?: PaymentProjectBinding, lockedMerchantId?: number) {
+  resetBindingForm(lockedMerchantId)
   if (binding) {
     editingBindingId.value = binding.id
     bindingForm.projectId = binding.projectId
-    bindingForm.projectGroup = projects.value.find((project) => project.id === binding.projectId)?.group || ''
-    bindingForm.merchantId = binding.merchantId
+    bindingForm.projectGroup = binding.businessLineCode || projects.value.find((project) => project.id === binding.projectId)?.businessLineCode || ''
+    bindingForm.merchantId = lockedMerchantId || binding.merchantId
     bindingForm.purposeCodes = binding.purposeCodes?.length ? [...binding.purposeCodes] : [binding.purposeCode]
     bindingForm.priority = binding.priority
     bindingForm.defaultBinding = binding.defaultBinding
@@ -601,9 +633,16 @@ function openBindingDialog(binding?: PaymentProjectBinding) {
   bindingDialogVisible.value = true
 }
 
+function openBindingDialogForSelectedMerchant(binding?: PaymentProjectBinding) {
+  if (!selectedMerchantId.value) {
+    ElMessage.warning('请先选择商户')
+    return
+  }
+  openBindingDialog(binding, selectedMerchantId.value)
+}
+
 function handleBindingBusinessChange(group: string) {
-  const matchedProject = projects.value.find((project) => project.group === group)
-  bindingForm.projectId = matchedProject?.id || 0
+  bindingForm.projectId = null
 }
 
 function normalizeBindingPurposeCodesForMerchant() {
@@ -619,11 +658,12 @@ function handleBindingMerchantChange() {
 }
 
 async function submitBinding() {
-  if (!bindingForm.projectId) {
-    ElMessage.warning('请选择已维护系统的业务')
+  if (!bindingForm.projectGroup) {
+    ElMessage.warning('请选择业务')
     return
   }
-  if (!bindingForm.merchantId) {
+  const merchantId = bindingDialogLockedMerchantId.value || bindingForm.merchantId
+  if (!merchantId) {
     ElMessage.warning('请选择商户')
     return
   }
@@ -640,7 +680,8 @@ async function submitBinding() {
   try {
     const payload = {
       projectId: bindingForm.projectId,
-      merchantId: bindingForm.merchantId,
+      businessLine: bindingForm.projectGroup,
+      merchantId,
       purposeCode: bindingForm.purposeCodes[0],
       purposeCodes: [...bindingForm.purposeCodes],
       priority: bindingForm.priority,
@@ -665,7 +706,7 @@ async function submitBinding() {
       ElMessage.success('业务支付绑定已新增')
     }
     bindingDialogVisible.value = false
-    await loadBindings()
+    await Promise.all([loadSelectedMerchantBindings(), loadMerchants()])
   } catch (error) {
     ElMessage.error('保存业务支付绑定失败')
     console.error(error)
@@ -863,7 +904,7 @@ function formatTime(value: string | null | undefined) {
 async function loadPage() {
   try {
     await loadBaseOptions()
-    await Promise.all([loadChannels(), loadMerchants(), loadBindings()])
+    await Promise.all([loadChannels(), loadMerchants()])
   } catch (error) {
     ElMessage.error('初始化支付配置页面失败')
     console.error(error)
@@ -897,7 +938,7 @@ onMounted(loadPage)
           </el-form-item>
           <el-form-item>
             <el-button type="primary" @click="searchChannels">查询</el-button>
-            <el-button type="primary" plain @click="openChannelDialog()">新增渠道</el-button>
+            <el-button v-if="canCreateChannel" type="primary" plain @click="openChannelDialog()">新增渠道</el-button>
           </el-form-item>
         </el-form>
 
@@ -912,7 +953,7 @@ onMounted(loadPage)
           </el-table-column>
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openChannelDialog(row.id)">编辑</el-button>
+              <el-button v-if="canUpdateChannel" link type="primary" @click="openChannelDialog(row.id)">编辑</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -946,9 +987,26 @@ onMounted(loadPage)
                 <el-option v-for="item in channelOptions" :key="item.id" :label="item.name" :value="item.id" />
               </el-select>
             </el-form-item>
+            <el-form-item label="业务线">
+              <el-select
+                v-model="merchantFilters.businessLine"
+                placeholder="业务线"
+                clearable
+                filterable
+                style="width: 180px"
+                @change="handleMerchantBusinessLineChange"
+              >
+                <el-option
+                  v-for="businessLine in businessLines"
+                  :key="businessLine.businessLineCode"
+                  :label="businessLine.groupName"
+                  :value="businessLine.businessLineCode"
+                />
+              </el-select>
+            </el-form-item>
             <el-form-item label="项目">
               <el-select v-model="merchantFilters.projectId" placeholder="项目" clearable filterable style="width: 260px">
-                <el-option v-for="project in projects" :key="project.id" :label="formatProjectOption(project)" :value="project.id">
+                <el-option v-for="project in merchantFilterProjects" :key="project.id" :label="formatProjectOption(project)" :value="project.id">
                   <div class="project-option">
                     <span class="project-option-code">{{ project.code }}</span>
                     <span class="project-option-name">{{ project.name }}</span>
@@ -973,7 +1031,7 @@ onMounted(loadPage)
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="searchMerchants">查询</el-button>
-              <el-button type="primary" plain @click="openMerchantDialog()">新增商户</el-button>
+              <el-button v-if="canCreateMerchant" type="primary" plain @click="openMerchantDialog()">新增商户</el-button>
             </el-form-item>
           </el-form>
 
@@ -995,7 +1053,7 @@ onMounted(loadPage)
             <el-table-column label="操作" width="160">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openMerchantDetailDialog(row.id)">详情</el-button>
-                <el-button link type="primary" @click="openMerchantDialog(row.id)">编辑</el-button>
+                <el-button v-if="canUpdateMerchant" link type="primary" @click="openMerchantDialog(row.id)">编辑</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -1014,123 +1072,6 @@ onMounted(loadPage)
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="项目用途绑定" name="bindings">
-        <el-form inline @submit.prevent="searchBindings">
-          <el-form-item label="业务">
-            <el-select
-              v-model="bindingFilters.projectGroup"
-              placeholder="业务"
-              clearable
-              filterable
-              style="width: 200px"
-              @change="handleBindingFilterBusinessChange"
-            >
-              <el-option v-for="business in bindingBusinessOptions" :key="business.group" :label="formatBusinessOption(business)" :value="business.group">
-                <div class="business-option">
-                  <span class="business-option-name">{{ business.group }}</span>
-                  <span class="business-option-meta">{{ business.projectCount }} 个项目</span>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-          <el-form-item label="项目">
-            <el-select v-model="bindingFilters.projectId" placeholder="项目" clearable filterable style="width: 260px">
-              <el-option v-for="project in bindingFilterProjects" :key="project.id" :label="formatProjectOption(project)" :value="project.id">
-                <div class="project-option">
-                  <span class="project-option-code">{{ project.code }}</span>
-                  <span class="project-option-name">{{ project.name }}</span>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-          <el-form-item label="商户">
-            <el-select v-model="bindingFilters.merchantId" placeholder="商户" clearable filterable style="width: 260px">
-              <el-option
-                v-for="merchant in merchantOptions"
-                :key="merchant.id"
-                :label="formatMerchantOption(merchant)"
-                :value="merchant.id"
-              >
-                <div class="merchant-option">
-                  <span class="merchant-option-code">{{ merchant.merchantCode }}</span>
-                  <span class="merchant-option-name">{{ merchant.merchantName }}</span>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-          <el-form-item label="用途">
-            <el-select v-model="bindingFilters.purposeCode" placeholder="用途" clearable filterable style="width: 220px">
-              <el-option v-for="purpose in purposes" :key="purpose.code" :label="formatPurposeOption(purpose)" :value="purpose.code">
-                <div class="purpose-option">
-                  <span class="purpose-option-name">{{ purpose.name }}</span>
-                  <span class="purpose-option-code">{{ purpose.code }}</span>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-          <el-form-item label="状态">
-            <el-select v-model="bindingFilters.status" placeholder="状态" clearable style="width: 120px">
-              <el-option v-for="status in statusOptions" :key="status" :label="formatStatus(status)" :value="status" />
-            </el-select>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" @click="searchBindings">查询</el-button>
-            <el-button type="primary" plain @click="openBindingDialog()">新增绑定</el-button>
-          </el-form-item>
-        </el-form>
-
-        <el-table v-loading="loadingBindings" :data="bindings">
-          <el-table-column label="业务" width="150" show-overflow-tooltip>
-            <template #default="{ row }">
-              {{ row.projectGroup || row.businessLineName || '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="项目" min-width="200" show-overflow-tooltip>
-            <template #default="{ row }">
-              <div class="binding-project-cell">
-                <span class="binding-project-name">{{ row.projectName || '-' }}</span>
-                <span class="binding-project-code">{{ row.projectCode || '-' }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="商户" min-width="200" show-overflow-tooltip>
-            <template #default="{ row }">
-              <div class="binding-merchant-cell">
-                <span class="binding-merchant-name">{{ row.merchantName || '-' }}</span>
-                <span class="binding-merchant-code">{{ row.merchantCode || '-' }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="channelName" label="渠道" width="140" />
-          <el-table-column label="用途" min-width="180" show-overflow-tooltip>
-            <template #default="{ row }">
-              {{ formatPurposeNames(row.purposeCodes, row.purposeCode) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="100">
-            <template #default="{ row }">
-              {{ formatStatus(row.status) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="120">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="openBindingDialog(row)">编辑</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <div class="pagination-bar">
-          <el-pagination
-            v-model:current-page="bindingPagination.page"
-            v-model:page-size="bindingPagination.pageSize"
-            :total="bindingPagination.total"
-            :page-sizes="[10, 20, 50, 100]"
-            background
-            layout="total, sizes, prev, pager, next, jumper"
-            @current-change="handleBindingPageChange"
-            @size-change="handleBindingPageSizeChange"
-          />
-        </div>
-      </el-tab-pane>
     </el-tabs>
   </div>
 
@@ -1158,9 +1099,9 @@ onMounted(loadPage)
         <div class="detail-title">{{ selectedMerchantLabel }}</div>
       </div>
       <div class="detail-actions">
-        <el-button size="small" type="primary" plain @click="openParamDialog()">新增参数</el-button>
-        <el-button size="small" type="primary" plain @click="openCredentialDialog()">新增凭据</el-button>
-        <el-button size="small" type="primary" plain @click="openSecretDialog()">新增秘钥</el-button>
+        <el-button v-if="canManageParam" size="small" type="primary" plain @click="openParamDialog()">新增参数</el-button>
+        <el-button v-if="canManageCredential" size="small" type="primary" plain @click="openCredentialDialog()">新增凭据</el-button>
+        <el-button v-if="canCreateSecret" size="small" type="primary" plain @click="openSecretDialog()">新增秘钥</el-button>
       </div>
     </div>
 
@@ -1178,6 +1119,48 @@ onMounted(loadPage)
             <el-descriptions-item label="备注" :span="2">{{ selectedMerchantDetail.remark || '-' }}</el-descriptions-item>
           </el-descriptions>
 
+          <div class="section-title">项目用途绑定</div>
+          <el-table v-loading="detailBindingsLoading" :data="selectedMerchantBindings" size="small" empty-text="当前商户暂无项目用途绑定">
+            <el-table-column label="业务" width="130" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.projectGroup || row.businessLineName || row.businessLine || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="项目" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div class="binding-project-cell">
+                  <span class="binding-project-name">{{ formatBindingProjectName(row) }}</span>
+                  <span class="binding-project-code">{{ formatBindingProjectCode(row) }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="用途" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ formatPurposeNames(row.purposeCodes, row.purposeCode) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="默认" width="70">
+              <template #default="{ row }">
+                {{ row.defaultBinding ? '是' : '否' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="80">
+              <template #default="{ row }">
+                {{ formatStatus(row.status) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="关联商户" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ formatRelationNames(row.relations) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="80">
+              <template #default="{ row }">
+                <el-button v-if="canManageBinding" link type="primary" @click="openBindingDialogForSelectedMerchant(row)">编辑</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
           <div class="section-title">生产参数</div>
           <el-table :data="selectedMerchantDetail.parameters" size="small">
             <el-table-column prop="paramKey" label="参数名" min-width="120" />
@@ -1185,7 +1168,7 @@ onMounted(loadPage)
             <el-table-column prop="displayValue" label="显示值" min-width="180" show-overflow-tooltip />
             <el-table-column label="操作" width="80">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openParamDialog(row)">编辑</el-button>
+                <el-button v-if="canManageParam" link type="primary" @click="openParamDialog(row)">编辑</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -1202,7 +1185,7 @@ onMounted(loadPage)
             </el-table-column>
             <el-table-column label="操作" width="80">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openCredentialDialog(row)">编辑</el-button>
+                <el-button v-if="canManageCredential" link type="primary" @click="openCredentialDialog(row)">编辑</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -1252,6 +1235,52 @@ onMounted(loadPage)
         </el-select>
       </el-form-item>
       <el-form-item label="备注"><el-input v-model="merchantForm.remark" type="textarea" :rows="3" /></el-form-item>
+      <template v-if="editingMerchantId">
+        <div class="form-section-header">
+          <span>项目用途绑定</span>
+          <el-button v-if="canManageBinding" size="small" type="primary" plain @click="openBindingDialogForSelectedMerchant()">新增绑定</el-button>
+        </div>
+        <el-table
+          v-loading="detailBindingsLoading"
+          :data="selectedMerchantBindings"
+          size="small"
+          empty-text="当前商户暂无项目用途绑定"
+        >
+          <el-table-column label="业务" width="130" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.projectGroup || row.businessLineName || row.businessLine || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="项目" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">
+              <div class="binding-project-cell">
+                <span class="binding-project-name">{{ formatBindingProjectName(row) }}</span>
+                <span class="binding-project-code">{{ formatBindingProjectCode(row) }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="用途" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ formatPurposeNames(row.purposeCodes, row.purposeCode) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="默认" width="70">
+            <template #default="{ row }">
+              {{ row.defaultBinding ? '是' : '否' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="80">
+            <template #default="{ row }">
+              {{ formatStatus(row.status) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="80">
+            <template #default="{ row }">
+              <el-button v-if="canManageBinding" link type="primary" @click="openBindingDialogForSelectedMerchant(row)">编辑</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
     </el-form>
     <template #footer>
       <el-button @click="merchantDialogVisible = false">取消</el-button>
@@ -1270,14 +1299,14 @@ onMounted(loadPage)
             :value="business.group"
           >
             <div class="business-option">
-              <span class="business-option-name">{{ business.group }}</span>
+              <span class="business-option-name">{{ business.name }}</span>
               <span class="business-option-meta">{{ business.projectCount }} 个项目</span>
             </div>
           </el-option>
         </el-select>
       </el-form-item>
       <el-form-item label="项目">
-        <el-select v-model="bindingForm.projectId" filterable style="width: 100%">
+        <el-select v-model="bindingForm.projectId" clearable filterable placeholder="不选表示业务线通用绑定" style="width: 100%">
           <el-option
             v-for="project in bindingFormProjects"
             :key="project.id"
@@ -1292,7 +1321,13 @@ onMounted(loadPage)
         </el-select>
       </el-form-item>
       <el-form-item label="商户">
-        <el-select v-model="bindingForm.merchantId" filterable style="width: 100%" @change="handleBindingMerchantChange">
+        <el-select
+          v-model="bindingForm.merchantId"
+          filterable
+          style="width: 100%"
+          :disabled="Boolean(bindingDialogLockedMerchantId)"
+          @change="handleBindingMerchantChange"
+        >
           <el-option
             v-for="merchant in merchantOptions"
             :key="merchant.id"
@@ -1351,9 +1386,9 @@ onMounted(loadPage)
             <el-input v-model="relation.relationName" placeholder="关系名称" />
             <el-input-number v-model="relation.priority" :min="1" controls-position="right" />
             <el-input v-model="relation.remark" placeholder="备注" />
-            <el-button link type="danger" @click="removeBindingRelation(index)">删除</el-button>
+            <el-button v-if="canManageBinding" link type="danger" @click="removeBindingRelation(index)">删除</el-button>
           </div>
-          <el-button size="small" type="primary" plain @click="addBindingRelation">新增关联商户</el-button>
+          <el-button v-if="canManageBinding" size="small" type="primary" plain @click="addBindingRelation">新增关联商户</el-button>
         </div>
       </el-form-item>
       <el-form-item label="备注"><el-input v-model="bindingForm.remark" type="textarea" :rows="3" /></el-form-item>
@@ -1496,6 +1531,18 @@ onMounted(loadPage)
 
 .section-title {
   margin: 18px 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.form-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 18px 0 10px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
   font-size: 14px;
   font-weight: 700;
   color: #0f172a;
