@@ -1,26 +1,26 @@
 <script setup lang="ts">
-import { ElMessage, type UploadFile, type UploadUserFile } from 'element-plus'
+import { ElMessage, ElMessageBox, type UploadFile, type UploadUserFile } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import {
   createPaymentBinding,
   createPaymentChannel,
   createPaymentMerchant,
-  createPaymentMerchantSecret,
-  createPaymentMerchantSecretFromFile,
+  deletePaymentMerchantParam,
+  downloadPaymentMerchantParamFile,
   fetchPaymentBindings,
   fetchPaymentChannelDetail,
   fetchPaymentChannels,
   fetchPaymentMerchantDetail,
   fetchPaymentMerchants,
   fetchPaymentPurposes,
-  savePaymentMerchantCredential,
   savePaymentMerchantParam,
+  savePaymentMerchantParamFromFile,
   updatePaymentBinding,
   updatePaymentChannel,
   updatePaymentMerchant,
-  updatePaymentMerchantCredential,
   updatePaymentMerchantParam,
+  updatePaymentMerchantParamFromFile,
 } from '@/api/payment'
 import { fetchProjectGroups, fetchProjects } from '@/api/project'
 import { useAuthStore } from '@/stores/auth'
@@ -29,7 +29,6 @@ import type {
   PaymentChannelSaveRequest,
   PaymentChannelSummary,
   PaymentMerchantDetail,
-  PaymentMerchantCredential,
   PaymentMerchantParam,
   PaymentMerchantSaveRequest,
   PaymentMerchantSummary,
@@ -76,15 +75,13 @@ const merchantDialogVisible = ref(false)
 const merchantDetailDialogVisible = ref(false)
 const bindingDialogVisible = ref(false)
 const paramDialogVisible = ref(false)
-const credentialDialogVisible = ref(false)
-const secretDialogVisible = ref(false)
-const secretUploadFiles = ref<UploadUserFile[]>([])
+const paramUploadFiles = ref<UploadUserFile[]>([])
 
 const editingChannelId = ref<number | null>(null)
 const editingMerchantId = ref<number | null>(null)
 const editingBindingId = ref<number | null>(null)
 const editingParamId = ref<number | null>(null)
-const editingCredentialId = ref<number | null>(null)
+const editingParamInputMode = ref<'TEXT' | 'FILE'>('TEXT')
 
 const channelFilters = reactive({
   channelId: undefined as number | undefined,
@@ -114,9 +111,18 @@ const merchantForm = reactive<PaymentMerchantSaveRequest>({
   merchantName: '',
   environment: 'PROD',
   status: 'ACTIVE',
-  appId: '',
   settlementSubject: '',
   purposeCodes: [],
+  remark: '',
+})
+
+const merchantBindingForm = reactive({
+  projectId: null as number | null,
+  projectGroup: '',
+  purposeCodes: [] as string[],
+  priority: 1,
+  defaultBinding: true,
+  status: 'ACTIVE',
   remark: '',
 })
 
@@ -140,39 +146,16 @@ const bindingForm = reactive({
 
 const paramForm = reactive({
   paramKey: '',
+  inputMode: 'TEXT' as 'TEXT' | 'FILE',
   paramValue: '',
   valueType: 'TEXT',
-  sensitive: false,
-  remark: '',
-})
-
-const secretForm = reactive({
-  secretName: '',
-  secretType: 'PRIVATE_KEY',
-  inputMode: 'TEXT' as 'TEXT' | 'FILE',
-  secretValue: '',
-  fileValueType: 'TEXT' as 'TEXT' | 'BINARY',
   file: null as File | null,
-  activateNow: true,
-  validFrom: '',
-  validTo: '',
-  remark: '',
-})
-
-const credentialForm = reactive({
-  credentialKey: '',
-  credentialName: '',
-  credentialType: 'PASSWORD',
-  credentialValue: '',
-  status: 'ACTIVE',
+  sensitive: false,
   remark: '',
 })
 
 const environmentOptions = ['PROD', 'UAT', 'SIT', 'TEST']
 const statusOptions = ['ACTIVE', 'INACTIVE']
-const valueTypeOptions = ['TEXT', 'JSON', 'URL', 'NUMBER', 'CERT', 'PEM']
-const secretTypeOptions = ['API_KEY', 'API_SECRET', 'PRIVATE_KEY', 'PUBLIC_KEY', 'CERTIFICATE', 'CERT_PASSWORD', 'SIGN_SECRET', 'APP_SECRET']
-const credentialTypeOptions = ['USERNAME', 'PASSWORD', 'TRADE_PASSWORD', 'AES_KEY', 'SIGN_KEY', 'PRIVATE_KEY_PASSWORD', 'CERT_PASSWORD', 'TOKEN', 'OTHER_SECRET']
 const relationRoleOptions = [
   { code: 'MAIN', name: '主商户' },
   { code: 'SHARED_AGREEMENT', name: '共享协议商户' },
@@ -187,9 +170,14 @@ const canUpdateChannel = computed(() => authStore.hasAnyPermission(['payment:cha
 const canCreateMerchant = computed(() => authStore.hasAnyPermission(['payment:merchant:create', 'payment:config:manage']))
 const canUpdateMerchant = computed(() => authStore.hasAnyPermission(['payment:merchant:update', 'payment:config:manage']))
 const canManageParam = computed(() => authStore.hasAnyPermission(['payment:param:manage', 'payment:config:manage']))
-const canManageCredential = computed(() => authStore.hasAnyPermission(['payment:credential:manage', 'payment:config:manage']))
 const canManageBinding = computed(() => authStore.hasAnyPermission(['payment:binding:manage', 'payment:config:manage']))
-const canCreateSecret = computed(() => authStore.hasAnyPermission(['payment:secret:create', 'payment:secret:manage']))
+const paramModeChanged = computed(() => Boolean(editingParamId.value) && paramForm.inputMode !== editingParamInputMode.value)
+const paramValuePlaceholder = computed(() => {
+  if (editingParamId.value && paramForm.inputMode === 'TEXT' && !paramModeChanged.value) {
+    return '留空表示不修改原值'
+  }
+  return ''
+})
 
 const selectedMerchantLabel = computed(() => {
   if (!selectedMerchantDetail.value) {
@@ -322,6 +310,21 @@ const merchantFilterProjects = computed(() => {
     return projects.value
   }
   return projects.value.filter((project) => project.businessLineCode === merchantFilters.businessLine)
+})
+
+const merchantBindingProjects = computed(() => {
+  if (!merchantBindingForm.projectGroup) {
+    return projects.value
+  }
+  return projects.value.filter((project) => project.businessLineCode === merchantBindingForm.projectGroup)
+})
+
+const merchantBindingPurposeOptions = computed(() => {
+  const supportedCodes = new Set(merchantForm.purposeCodes || [])
+  if (!supportedCodes.size) {
+    return []
+  }
+  return purposes.value.filter((purpose) => supportedCodes.has(purpose.code))
 })
 
 const selectedBindingMerchant = computed(() => {
@@ -533,15 +536,22 @@ async function submitChannel() {
 
 function resetMerchantForm() {
   editingMerchantId.value = null
+  const firstBusiness = bindingBusinessOptions.value[0]
   merchantForm.channelId = channelOptions.value[0]?.id || 0
   merchantForm.merchantCode = ''
   merchantForm.merchantName = ''
   merchantForm.environment = 'PROD'
   merchantForm.status = 'ACTIVE'
-  merchantForm.appId = ''
   merchantForm.settlementSubject = ''
   merchantForm.purposeCodes = []
   merchantForm.remark = ''
+  merchantBindingForm.projectId = null
+  merchantBindingForm.projectGroup = firstBusiness?.group || ''
+  merchantBindingForm.purposeCodes = []
+  merchantBindingForm.priority = 1
+  merchantBindingForm.defaultBinding = true
+  merchantBindingForm.status = 'ACTIVE'
+  merchantBindingForm.remark = ''
 }
 
 async function openMerchantDialog(id?: number) {
@@ -560,7 +570,6 @@ async function openMerchantDialog(id?: number) {
     merchantForm.merchantName = detail.merchantName
     merchantForm.environment = detail.environment
     merchantForm.status = detail.status
-    merchantForm.appId = detail.appId || ''
     merchantForm.settlementSubject = detail.settlementSubject || ''
     merchantForm.purposeCodes = [...(detail.purposeCodes || [])]
     merchantForm.remark = detail.remark || ''
@@ -575,17 +584,59 @@ async function submitMerchant() {
       await updatePaymentMerchant(editingMerchantId.value, merchantForm)
       ElMessage.success('支付商户已更新')
     } else {
-      await createPaymentMerchant(merchantForm)
+      if (!merchantBindingForm.projectGroup) {
+        ElMessage.warning('请选择绑定业务')
+        return
+      }
+      normalizeMerchantBindingPurposeCodes()
+      if (!merchantForm.purposeCodes?.length) {
+        ElMessage.warning('请至少选择一个支持用途')
+        return
+      }
+      if (!merchantBindingForm.purposeCodes.length) {
+        ElMessage.warning('请选择绑定用途')
+        return
+      }
+      const createdMerchant = await createPaymentMerchant(merchantForm)
+      await createPaymentBinding({
+        projectId: merchantBindingForm.projectId,
+        businessLineCode: merchantBindingForm.projectGroup,
+        businessLine: merchantBindingForm.projectGroup,
+        merchantId: createdMerchant.id,
+        purposeCode: merchantBindingForm.purposeCodes[0],
+        purposeCodes: [...merchantBindingForm.purposeCodes],
+        priority: merchantBindingForm.priority,
+        defaultBinding: merchantBindingForm.defaultBinding,
+        status: merchantBindingForm.status,
+        remark: merchantBindingForm.remark,
+        relations: [],
+      })
       ElMessage.success('支付商户已新增')
     }
     merchantDialogVisible.value = false
     await Promise.all([loadBaseOptions(), loadMerchants(), loadSelectedMerchantBindings()])
   } catch (error) {
-    ElMessage.error('保存支付商户失败')
-    console.error(error)
+    ElMessage.error(errorMessage(error, '保存支付商户失败'))
+    logRequestError('保存支付商户失败', error)
   } finally {
     submitting.value = false
   }
+}
+
+function handleMerchantBindingBusinessChange() {
+  merchantBindingForm.projectId = null
+}
+
+function normalizeMerchantBindingPurposeCodes() {
+  const supportedCodes = merchantForm.purposeCodes || []
+  merchantBindingForm.purposeCodes = merchantBindingForm.purposeCodes.filter((code) => supportedCodes.includes(code))
+  if (!merchantBindingForm.purposeCodes.length && supportedCodes.length) {
+    merchantBindingForm.purposeCodes = [supportedCodes[0]]
+  }
+}
+
+function handleMerchantPurposeChange() {
+  normalizeMerchantBindingPurposeCodes()
 }
 
 function resetBindingForm(lockedMerchantId?: number) {
@@ -680,6 +731,7 @@ async function submitBinding() {
   try {
     const payload = {
       projectId: bindingForm.projectId,
+      businessLineCode: bindingForm.projectGroup,
       businessLine: bindingForm.projectGroup,
       merchantId,
       purposeCode: bindingForm.purposeCodes[0],
@@ -708,8 +760,8 @@ async function submitBinding() {
     bindingDialogVisible.value = false
     await Promise.all([loadSelectedMerchantBindings(), loadMerchants()])
   } catch (error) {
-    ElMessage.error('保存业务支付绑定失败')
-    console.error(error)
+    ElMessage.error(errorMessage(error, '保存业务支付绑定失败'))
+    logRequestError('保存业务支付绑定失败', error)
   } finally {
     submitting.value = false
   }
@@ -736,161 +788,125 @@ function openParamDialog(param?: PaymentMerchantParam) {
   }
   editingParamId.value = param?.id || null
   paramForm.paramKey = param?.paramKey || ''
-  paramForm.paramValue = ''
-  paramForm.valueType = param?.valueType || 'TEXT'
+  paramForm.inputMode = param?.sourceType === 'FILE' || param?.valueType === 'FILE' ? 'FILE' : 'TEXT'
+  editingParamInputMode.value = paramForm.inputMode
+  paramForm.paramValue = param && !param.sensitive && paramForm.inputMode === 'TEXT' ? param.displayValue : ''
+  paramForm.valueType = paramForm.inputMode === 'FILE' ? 'FILE' : 'TEXT'
+  paramForm.file = null
+  paramUploadFiles.value = param?.fileName ? [{ name: param.fileName }] : []
   paramForm.sensitive = param?.sensitive || false
   paramForm.remark = param?.remark || ''
   paramDialogVisible.value = true
+}
+
+function handleParamFileChange(file: UploadFile) {
+  paramForm.file = file.raw || null
+  paramUploadFiles.value = [file]
+}
+
+function handleParamFileRemove() {
+  paramForm.file = null
+  paramUploadFiles.value = []
 }
 
 async function submitParam() {
   if (!selectedMerchantId.value) {
     return
   }
+  if (!paramForm.paramKey.trim()) {
+    ElMessage.warning('请输入参数名')
+    return
+  }
+  if (paramForm.inputMode === 'TEXT' && (!editingParamId.value || paramModeChanged.value) && !paramForm.paramValue.trim()) {
+    ElMessage.warning('请输入参数值')
+    return
+  }
+  if (paramForm.inputMode === 'FILE' && (!editingParamId.value || paramModeChanged.value) && !paramForm.file) {
+    ElMessage.warning('请先选择参数文件')
+    return
+  }
   submitting.value = true
   try {
-    if (editingParamId.value) {
-      await updatePaymentMerchantParam(selectedMerchantId.value, editingParamId.value, paramForm)
-      ElMessage.success('商户参数已更新')
+    if (paramForm.inputMode === 'FILE') {
+      const request = {
+        paramKey: paramForm.paramKey,
+        valueType: 'FILE',
+        fileValueType: 'BINARY' as const,
+        file: paramForm.file || undefined,
+        remark: paramForm.remark || undefined,
+      }
+      if (editingParamId.value) {
+        await updatePaymentMerchantParamFromFile(selectedMerchantId.value, editingParamId.value, request)
+        ElMessage.success('商户参数已更新')
+      } else {
+        await savePaymentMerchantParamFromFile(selectedMerchantId.value, request)
+        ElMessage.success('商户参数已新增')
+      }
     } else {
-      await savePaymentMerchantParam(selectedMerchantId.value, paramForm)
-      ElMessage.success('商户参数已新增')
+      const request = {
+        paramKey: paramForm.paramKey,
+        paramValue: paramForm.paramValue || undefined,
+        valueType: 'TEXT',
+        sensitive: paramForm.sensitive,
+        remark: paramForm.remark || undefined,
+      }
+      if (editingParamId.value) {
+        await updatePaymentMerchantParam(selectedMerchantId.value, editingParamId.value, request)
+        ElMessage.success('商户参数已更新')
+      } else {
+        await savePaymentMerchantParam(selectedMerchantId.value, request)
+        ElMessage.success('商户参数已新增')
+      }
     }
     paramDialogVisible.value = false
     await loadMerchantDetail(selectedMerchantId.value)
   } catch (error) {
-    ElMessage.error('保存商户参数失败')
-    console.error(error)
+    ElMessage.error(errorMessage(error, '保存商户参数失败'))
+    logRequestError('保存商户参数失败', error)
   } finally {
     submitting.value = false
   }
 }
 
-function openCredentialDialog(credential?: PaymentMerchantCredential) {
+async function downloadParamFile(param: PaymentMerchantParam) {
   if (!selectedMerchantId.value) {
-    ElMessage.warning('请先选择商户')
     return
   }
-  editingCredentialId.value = credential?.id || null
-  credentialForm.credentialKey = credential?.credentialKey || ''
-  credentialForm.credentialName = credential?.credentialName || ''
-  credentialForm.credentialType = credential?.credentialType || 'PASSWORD'
-  credentialForm.credentialValue = ''
-  credentialForm.status = credential?.status || 'ACTIVE'
-  credentialForm.remark = credential?.remark || ''
-  credentialDialogVisible.value = true
+  try {
+    const blob = await downloadPaymentMerchantParamFile(selectedMerchantId.value, param.id)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = param.fileName || param.paramKey
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '下载参数文件失败'))
+    logRequestError('下载参数文件失败', error)
+  }
 }
 
-async function submitCredential() {
+async function deleteParam(param: PaymentMerchantParam) {
   if (!selectedMerchantId.value) {
     return
   }
-  submitting.value = true
   try {
-    if (editingCredentialId.value) {
-      await updatePaymentMerchantCredential(selectedMerchantId.value, editingCredentialId.value, {
-        credentialKey: credentialForm.credentialKey,
-        credentialName: credentialForm.credentialName,
-        credentialType: credentialForm.credentialType,
-        credentialValue: credentialForm.credentialValue,
-        status: credentialForm.status,
-        remark: credentialForm.remark,
-      })
-      ElMessage.success('敏感凭据已更新')
-    } else {
-      await savePaymentMerchantCredential(selectedMerchantId.value, {
-        credentialKey: credentialForm.credentialKey,
-        credentialName: credentialForm.credentialName,
-        credentialType: credentialForm.credentialType,
-        credentialValue: credentialForm.credentialValue,
-        status: credentialForm.status,
-        remark: credentialForm.remark,
-      })
-      ElMessage.success('敏感凭据已新增')
-    }
-    credentialDialogVisible.value = false
+    await ElMessageBox.confirm(`确认删除参数「${param.paramKey}」吗？`, '删除商户参数', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+    await deletePaymentMerchantParam(selectedMerchantId.value, param.id)
+    ElMessage.success('商户参数已删除')
     await loadMerchantDetail(selectedMerchantId.value)
   } catch (error) {
-    ElMessage.error('保存敏感凭据失败')
-    console.error(error)
-  } finally {
-    submitting.value = false
-  }
-}
-
-function openSecretDialog() {
-  if (!selectedMerchantId.value) {
-    ElMessage.warning('请先选择商户')
-    return
-  }
-  secretForm.secretName = ''
-  secretForm.secretType = 'PRIVATE_KEY'
-  secretForm.inputMode = 'TEXT'
-  secretForm.secretValue = ''
-  secretForm.fileValueType = 'TEXT'
-  secretForm.file = null
-  secretUploadFiles.value = []
-  secretForm.activateNow = true
-  secretForm.validFrom = ''
-  secretForm.validTo = ''
-  secretForm.remark = ''
-  secretDialogVisible.value = true
-}
-
-function handleSecretFileChange(file: UploadFile) {
-  secretForm.file = file.raw || null
-  secretUploadFiles.value = [file]
-}
-
-function handleSecretFileRemove() {
-  secretForm.file = null
-  secretUploadFiles.value = []
-}
-
-async function submitSecret() {
-  if (!selectedMerchantId.value) {
-    return
-  }
-  if (secretForm.inputMode === 'TEXT' && !secretForm.secretValue.trim()) {
-    ElMessage.warning('请输入秘钥明文')
-    return
-  }
-  if (secretForm.inputMode === 'FILE' && !secretForm.file) {
-    ElMessage.warning('请先选择秘钥文件')
-    return
-  }
-  submitting.value = true
-  try {
-    if (secretForm.inputMode === 'FILE' && secretForm.file) {
-      await createPaymentMerchantSecretFromFile(selectedMerchantId.value, {
-        secretName: secretForm.secretName,
-        secretType: secretForm.secretType,
-        fileValueType: secretForm.fileValueType,
-        file: secretForm.file,
-        activateNow: secretForm.activateNow,
-        validFrom: secretForm.validFrom || undefined,
-        validTo: secretForm.validTo || undefined,
-        remark: secretForm.remark,
-      })
-    } else {
-      await createPaymentMerchantSecret(selectedMerchantId.value, {
-        secretName: secretForm.secretName,
-        secretType: secretForm.secretType,
-        secretValue: secretForm.secretValue,
-        activateNow: secretForm.activateNow,
-        validFrom: secretForm.validFrom || undefined,
-        validTo: secretForm.validTo || undefined,
-        remark: secretForm.remark,
-      })
+    if (error === 'cancel' || error === 'close') {
+      return
     }
-    secretDialogVisible.value = false
-    ElMessage.success('商户秘钥版本已新增')
-    await loadMerchantDetail(selectedMerchantId.value)
-  } catch (error) {
-    ElMessage.error(errorMessage(error, '保存商户秘钥失败'))
-    logRequestError('保存商户秘钥失败', error)
-  } finally {
-    submitting.value = false
+    ElMessage.error(errorMessage(error, '删除商户参数失败'))
+    logRequestError('删除商户参数失败', error)
   }
 }
 
@@ -919,7 +935,7 @@ onMounted(loadPage)
     <div class="page-header">
       <div>
         <h1 class="page-title">支付配置管理</h1>
-        <p class="page-desc">统一管理支付渠道、商户账号、生产参数、秘钥版本以及项目用途绑定。</p>
+        <p class="page-desc">统一管理支付渠道、商户账号、商户参数以及项目用途绑定。</p>
       </div>
     </div>
 
@@ -971,7 +987,7 @@ onMounted(loadPage)
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="商户账号与密钥" name="merchants">
+      <el-tab-pane label="支付商户" name="merchants">
         <div class="sub-card">
           <el-form inline @submit.prevent="searchMerchants">
             <el-form-item label="商户">
@@ -1098,11 +1114,6 @@ onMounted(loadPage)
       <div>
         <div class="detail-title">{{ selectedMerchantLabel }}</div>
       </div>
-      <div class="detail-actions">
-        <el-button v-if="canManageParam" size="small" type="primary" plain @click="openParamDialog()">新增参数</el-button>
-        <el-button v-if="canManageCredential" size="small" type="primary" plain @click="openCredentialDialog()">新增凭据</el-button>
-        <el-button v-if="canCreateSecret" size="small" type="primary" plain @click="openSecretDialog()">新增秘钥</el-button>
-      </div>
     </div>
 
     <el-skeleton :loading="detailLoading" animated>
@@ -1113,7 +1124,6 @@ onMounted(loadPage)
             <el-descriptions-item label="环境">{{ selectedMerchantDetail.environment }}</el-descriptions-item>
             <el-descriptions-item label="商户号">{{ selectedMerchantDetail.merchantCode }}</el-descriptions-item>
             <el-descriptions-item label="商户名称">{{ selectedMerchantDetail.merchantName }}</el-descriptions-item>
-            <el-descriptions-item label="AppId">{{ selectedMerchantDetail.appId || '-' }}</el-descriptions-item>
             <el-descriptions-item label="结算主体">{{ selectedMerchantDetail.settlementSubject || '-' }}</el-descriptions-item>
             <el-descriptions-item label="支持用途" :span="2">{{ formatPurposeNames(selectedMerchantDetail.purposeCodes, null) }}</el-descriptions-item>
             <el-descriptions-item label="备注" :span="2">{{ selectedMerchantDetail.remark || '-' }}</el-descriptions-item>
@@ -1154,56 +1164,32 @@ onMounted(loadPage)
                 {{ formatRelationNames(row.relations) }}
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="80">
-              <template #default="{ row }">
-                <el-button v-if="canManageBinding" link type="primary" @click="openBindingDialogForSelectedMerchant(row)">编辑</el-button>
-              </template>
-            </el-table-column>
           </el-table>
 
-          <div class="section-title">生产参数</div>
+          <div class="section-title">商户参数</div>
           <el-table :data="selectedMerchantDetail.parameters" size="small">
             <el-table-column prop="paramKey" label="参数名" min-width="120" />
             <el-table-column prop="valueType" label="类型" width="90" />
             <el-table-column prop="displayValue" label="显示值" min-width="180" show-overflow-tooltip />
-            <el-table-column label="操作" width="80">
+            <el-table-column label="文件" min-width="160" show-overflow-tooltip>
               <template #default="{ row }">
-                <el-button v-if="canManageParam" link type="primary" @click="openParamDialog(row)">编辑</el-button>
+                {{ row.sourceType === 'FILE' ? row.fileName || '历史文件' : '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="90">
+              <template #default="{ row }">
+                <el-button v-if="row.sourceType === 'FILE'" link type="primary" @click="downloadParamFile(row)">下载</el-button>
               </template>
             </el-table-column>
           </el-table>
 
-          <div class="section-title">敏感凭据</div>
-          <el-table :data="selectedMerchantDetail.credentials" size="small">
-            <el-table-column prop="credentialName" label="名称" min-width="120" show-overflow-tooltip />
-            <el-table-column prop="credentialType" label="类型" width="130" />
-            <el-table-column prop="maskedValue" label="脱敏值" min-width="160" show-overflow-tooltip />
-            <el-table-column label="状态" width="80">
-              <template #default="{ row }">
-                {{ formatStatus(row.status) }}
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="80">
-              <template #default="{ row }">
-                <el-button v-if="canManageCredential" link type="primary" @click="openCredentialDialog(row)">编辑</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-
-          <div class="section-title">秘钥版本</div>
-          <el-table :data="selectedMerchantDetail.secrets" size="small">
-            <el-table-column prop="secretName" label="名称" min-width="120" />
-            <el-table-column prop="secretType" label="类型" width="110" />
-            <el-table-column prop="versionNo" label="版本" width="70" />
-            <el-table-column prop="maskedValue" label="脱敏值" min-width="160" show-overflow-tooltip />
-          </el-table>
         </template>
         <el-empty v-else description="请选择商户查看详情" />
       </template>
     </el-skeleton>
   </el-dialog>
 
-  <el-dialog v-model="merchantDialogVisible" :title="editingMerchantId ? '编辑支付商户' : '新增支付商户'" width="640px">
+  <el-dialog v-model="merchantDialogVisible" :title="editingMerchantId ? '编辑支付商户' : '新增支付商户'" width="min(1080px, 94vw)">
     <el-form label-width="110px">
       <el-form-item label="所属渠道">
         <el-select v-model="merchantForm.channelId" style="width: 100%">
@@ -1222,10 +1208,9 @@ onMounted(loadPage)
           <el-option v-for="status in statusOptions" :key="status" :label="formatStatus(status)" :value="status" />
         </el-select>
       </el-form-item>
-      <el-form-item label="AppId"><el-input v-model="merchantForm.appId" /></el-form-item>
       <el-form-item label="结算主体"><el-input v-model="merchantForm.settlementSubject" /></el-form-item>
       <el-form-item label="支持用途">
-        <el-select v-model="merchantForm.purposeCodes" multiple filterable style="width: 100%">
+        <el-select v-model="merchantForm.purposeCodes" multiple filterable style="width: 100%" @change="handleMerchantPurposeChange">
           <el-option v-for="purpose in purposes" :key="purpose.code" :label="formatPurposeOption(purpose)" :value="purpose.code">
             <div class="purpose-option">
               <span class="purpose-option-name">{{ purpose.name }}</span>
@@ -1235,6 +1220,65 @@ onMounted(loadPage)
         </el-select>
       </el-form-item>
       <el-form-item label="备注"><el-input v-model="merchantForm.remark" type="textarea" :rows="3" /></el-form-item>
+      <template v-if="!editingMerchantId">
+        <div class="form-section-header">
+          <span>项目用途绑定</span>
+        </div>
+        <el-form-item label="业务">
+          <el-select v-model="merchantBindingForm.projectGroup" filterable style="width: 100%" @change="handleMerchantBindingBusinessChange">
+            <el-option
+              v-for="business in bindingBusinessOptions"
+              :key="business.group"
+              :label="formatBusinessOption(business)"
+              :value="business.group"
+            >
+              <div class="business-option">
+                <span class="business-option-name">{{ business.name }}</span>
+                <span class="business-option-meta">{{ business.projectCount }} 个项目</span>
+              </div>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="项目">
+          <el-select v-model="merchantBindingForm.projectId" clearable filterable placeholder="不选表示业务线通用绑定" style="width: 100%">
+            <el-option
+              v-for="project in merchantBindingProjects"
+              :key="project.id"
+              :label="formatProjectOption(project)"
+              :value="project.id"
+            >
+              <div class="project-option">
+                <span class="project-option-code">{{ project.code }}</span>
+                <span class="project-option-name">{{ project.name }}</span>
+              </div>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="绑定用途">
+          <el-select
+            v-model="merchantBindingForm.purposeCodes"
+            multiple
+            filterable
+            :placeholder="merchantBindingPurposeOptions.length ? '选择当前商户支持的用途' : '请先选择支持用途'"
+            style="width: 100%"
+          >
+            <el-option v-for="purpose in merchantBindingPurposeOptions" :key="purpose.code" :label="formatPurposeOption(purpose)" :value="purpose.code">
+              <div class="purpose-option">
+                <span class="purpose-option-name">{{ purpose.name }}</span>
+                <span class="purpose-option-code">{{ purpose.code }}</span>
+              </div>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="优先级"><el-input-number v-model="merchantBindingForm.priority" :min="1" /></el-form-item>
+        <el-form-item label="默认绑定"><el-switch v-model="merchantBindingForm.defaultBinding" /></el-form-item>
+        <el-form-item label="绑定状态">
+          <el-select v-model="merchantBindingForm.status" style="width: 100%">
+            <el-option v-for="status in statusOptions" :key="status" :label="formatStatus(status)" :value="status" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="绑定备注"><el-input v-model="merchantBindingForm.remark" type="textarea" :rows="2" /></el-form-item>
+      </template>
       <template v-if="editingMerchantId">
         <div class="form-section-header">
           <span>项目用途绑定</span>
@@ -1277,6 +1321,29 @@ onMounted(loadPage)
           <el-table-column label="操作" width="80">
             <template #default="{ row }">
               <el-button v-if="canManageBinding" link type="primary" @click="openBindingDialogForSelectedMerchant(row)">编辑</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+      <template v-if="editingMerchantId && selectedMerchantDetail">
+        <div class="form-section-header">
+          <span>已维护参数</span>
+          <el-button v-if="canManageParam" size="small" type="primary" plain @click="openParamDialog()">新增参数</el-button>
+        </div>
+        <el-table :data="selectedMerchantDetail.parameters" size="small" empty-text="当前商户暂无参数">
+          <el-table-column prop="paramKey" label="参数名" min-width="140" />
+          <el-table-column prop="valueType" label="类型" width="90" />
+          <el-table-column prop="displayValue" label="显示值" min-width="180" show-overflow-tooltip />
+          <el-table-column label="文件" min-width="150" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.sourceType === 'FILE' ? row.fileName || '历史文件' : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="170">
+            <template #default="{ row }">
+              <el-button v-if="row.sourceType === 'FILE'" link type="primary" @click="downloadParamFile(row)">下载</el-button>
+              <el-button v-if="canManageParam" link type="primary" @click="openParamDialog(row)">编辑</el-button>
+              <el-button v-if="canManageParam" link type="danger" @click="deleteParam(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -1401,14 +1468,35 @@ onMounted(loadPage)
 
   <el-dialog v-model="paramDialogVisible" :title="editingParamId ? '编辑商户参数' : '新增商户参数'" width="560px">
     <el-form label-width="100px">
-      <el-form-item label="参数名"><el-input v-model="paramForm.paramKey" :disabled="Boolean(editingParamId)" /></el-form-item>
-      <el-form-item label="参数值"><el-input v-model="paramForm.paramValue" type="textarea" :rows="4" /></el-form-item>
-      <el-form-item label="值类型">
-        <el-select v-model="paramForm.valueType" style="width: 100%">
-          <el-option v-for="item in valueTypeOptions" :key="item" :label="item" :value="item" />
-        </el-select>
+      <el-form-item label="参数名"><el-input v-model="paramForm.paramKey" /></el-form-item>
+      <el-form-item label="类型">
+        <el-radio-group v-model="paramForm.inputMode">
+          <el-radio-button label="TEXT">TEXT</el-radio-button>
+          <el-radio-button label="FILE">文件</el-radio-button>
+        </el-radio-group>
       </el-form-item>
-      <el-form-item label="敏感参数"><el-switch v-model="paramForm.sensitive" /></el-form-item>
+      <el-form-item v-if="paramForm.inputMode === 'TEXT'" label="参数值">
+        <el-input
+          v-model="paramForm.paramValue"
+          type="textarea"
+          :rows="4"
+          :placeholder="paramValuePlaceholder"
+        />
+      </el-form-item>
+      <template v-else>
+        <el-form-item label="参数文件">
+          <el-upload
+            :auto-upload="false"
+            :file-list="paramUploadFiles"
+            :limit="1"
+            :on-change="handleParamFileChange"
+            :on-remove="handleParamFileRemove"
+          >
+            <el-button>选择文件</el-button>
+          </el-upload>
+        </el-form-item>
+      </template>
+      <el-form-item v-if="paramForm.inputMode === 'TEXT'" label="敏感参数"><el-switch v-model="paramForm.sensitive" /></el-form-item>
       <el-form-item label="备注"><el-input v-model="paramForm.remark" /></el-form-item>
     </el-form>
     <template #footer>
@@ -1417,75 +1505,6 @@ onMounted(loadPage)
     </template>
   </el-dialog>
 
-  <el-dialog v-model="credentialDialogVisible" :title="editingCredentialId ? '编辑敏感凭据' : '新增敏感凭据'" width="620px">
-    <el-form label-width="110px">
-      <el-form-item label="凭据键"><el-input v-model="credentialForm.credentialKey" :disabled="Boolean(editingCredentialId)" /></el-form-item>
-      <el-form-item label="凭据名称"><el-input v-model="credentialForm.credentialName" /></el-form-item>
-      <el-form-item label="凭据类型">
-        <el-select v-model="credentialForm.credentialType" style="width: 100%">
-          <el-option v-for="item in credentialTypeOptions" :key="item" :label="item" :value="item" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="凭据明文"><el-input v-model="credentialForm.credentialValue" type="textarea" :rows="4" show-password /></el-form-item>
-      <el-form-item label="状态">
-        <el-select v-model="credentialForm.status" style="width: 100%">
-          <el-option v-for="status in statusOptions" :key="status" :label="formatStatus(status)" :value="status" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="备注"><el-input v-model="credentialForm.remark" /></el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="credentialDialogVisible = false">取消</el-button>
-      <el-button type="primary" :loading="submitting" @click="submitCredential">保存</el-button>
-    </template>
-  </el-dialog>
-
-  <el-dialog v-model="secretDialogVisible" title="新增商户秘钥版本" width="620px">
-    <el-form label-width="110px">
-      <el-form-item label="秘钥名称"><el-input v-model="secretForm.secretName" /></el-form-item>
-      <el-form-item label="秘钥类型">
-        <el-select v-model="secretForm.secretType" style="width: 100%">
-          <el-option v-for="item in secretTypeOptions" :key="item" :label="item" :value="item" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="录入方式">
-        <el-radio-group v-model="secretForm.inputMode">
-          <el-radio-button label="TEXT">手动输入</el-radio-button>
-          <el-radio-button label="FILE">上传文件</el-radio-button>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item v-if="secretForm.inputMode === 'TEXT'" label="秘钥明文">
-        <el-input v-model="secretForm.secretValue" type="textarea" :rows="5" show-password />
-      </el-form-item>
-      <template v-else>
-        <el-form-item label="文件内容">
-          <el-radio-group v-model="secretForm.fileValueType">
-            <el-radio-button label="TEXT">文本</el-radio-button>
-            <el-radio-button label="BINARY">二进制</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="秘钥文件">
-          <el-upload
-            :auto-upload="false"
-            :file-list="secretUploadFiles"
-            :limit="1"
-            :on-change="handleSecretFileChange"
-            :on-remove="handleSecretFileRemove"
-          >
-            <el-button>选择文件</el-button>
-          </el-upload>
-        </el-form-item>
-      </template>
-      <el-form-item label="立即生效"><el-switch v-model="secretForm.activateNow" /></el-form-item>
-      <el-form-item label="生效时间"><el-input v-model="secretForm.validFrom" placeholder="例如 2026-04-08T10:00:00" /></el-form-item>
-      <el-form-item label="失效时间"><el-input v-model="secretForm.validTo" placeholder="例如 2026-12-31T23:59:59" /></el-form-item>
-      <el-form-item label="备注"><el-input v-model="secretForm.remark" /></el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="secretDialogVisible = false">取消</el-button>
-      <el-button type="primary" :loading="submitting" @click="submitSecret">保存</el-button>
-    </template>
-  </el-dialog>
 </template>
 
 <style scoped>

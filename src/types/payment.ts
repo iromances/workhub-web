@@ -33,7 +33,6 @@ export interface PaymentMerchantSummary {
   merchantCode: string
   merchantName: string
   environment: string
-  appId: string | null
   purposeCodes: string[]
   status: string
 }
@@ -42,6 +41,10 @@ export interface PaymentMerchantParam {
   id: number
   paramKey: string
   valueType: string
+  sourceType: 'TEXT' | 'FILE' | null
+  fileName: string | null
+  fileContentType: string | null
+  fileValueType: 'TEXT' | 'BINARY' | null
   sensitive: boolean
   displayValue: string
   remark: string | null
@@ -57,6 +60,10 @@ export interface PaymentSecretSummary {
   maskedValue: string
   fingerprint: string
   algorithm: string
+  sourceType: string | null
+  fileName: string | null
+  fileContentType: string | null
+  fileValueType: 'TEXT' | 'BINARY' | null
   status: string
   validFrom: string | null
   validTo: string | null
@@ -95,7 +102,6 @@ export interface PaymentMerchantDetail {
   merchantCode: string
   merchantName: string
   environment: string
-  appId: string | null
   settlementSubject: string | null
   status: string
   remark: string | null
@@ -113,7 +119,6 @@ export interface PaymentMerchantSaveRequest {
   merchantName: string
   environment: string
   status: string
-  appId?: string
   settlementSubject?: string
   purposeCodes?: string[]
   remark?: string
@@ -121,17 +126,25 @@ export interface PaymentMerchantSaveRequest {
 
 export interface PaymentMerchantParamSaveRequest {
   paramKey?: string
-  paramValue: string
+  paramValue?: string
   valueType: string
   sensitive?: boolean
+  remark?: string
+}
+
+export interface PaymentMerchantParamFileUploadRequest {
+  paramKey?: string
+  valueType: string
+  fileValueType: 'TEXT' | 'BINARY'
+  file?: File
   remark?: string
 }
 
 export interface PaymentSecretSaveRequest {
   secretName: string
   secretType: string
-  secretValue: string
-  activateNow?: boolean
+  secretValue?: string
+  status: string
   validFrom?: string
   validTo?: string
   remark?: string
@@ -141,8 +154,8 @@ export interface PaymentSecretFileUploadRequest {
   secretName: string
   secretType: string
   fileValueType: 'TEXT' | 'BINARY'
-  file: File
-  activateNow?: boolean
+  file?: File
+  status: string
   validFrom?: string
   validTo?: string
   remark?: string
@@ -203,6 +216,7 @@ export interface PaymentProjectBinding {
 
 export interface PaymentProjectBindingSaveRequest {
   projectId?: number | null
+  businessLineCode?: string
   businessLine: string
   merchantId: number
   purposeCode: string

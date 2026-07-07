@@ -6,6 +6,7 @@ import type {
   PaymentMerchantDetail,
   PaymentMerchantCredential,
   PaymentMerchantCredentialSaveRequest,
+  PaymentMerchantParamFileUploadRequest,
   PaymentMerchantParam,
   PaymentMerchantParamSaveRequest,
   PaymentMerchantSaveRequest,
@@ -87,6 +88,39 @@ export async function updatePaymentMerchantParam(merchantId: number,
   return response.data.data
 }
 
+export async function deletePaymentMerchantParam(merchantId: number, paramId: number): Promise<PaymentMerchantParam[]> {
+  const response = await http.delete<ApiResponse<PaymentMerchantParam[]>>(`/payment/merchants/${merchantId}/params/${paramId}`)
+  return response.data.data
+}
+
+export async function savePaymentMerchantParamFromFile(merchantId: number,
+                                                       request: PaymentMerchantParamFileUploadRequest): Promise<PaymentMerchantParam[]> {
+  const formData = paramFileFormData(request)
+  if (request.file) {
+    formData.append('file', request.file)
+  }
+  const response = await http.post<ApiResponse<PaymentMerchantParam[]>>(`/payment/merchants/${merchantId}/params/file`, formData)
+  return response.data.data
+}
+
+export async function updatePaymentMerchantParamFromFile(merchantId: number,
+                                                         paramId: number,
+                                                         request: PaymentMerchantParamFileUploadRequest): Promise<PaymentMerchantParam[]> {
+  const formData = paramFileFormData(request)
+  if (request.file) {
+    formData.append('file', request.file)
+  }
+  const response = await http.put<ApiResponse<PaymentMerchantParam[]>>(`/payment/merchants/${merchantId}/params/${paramId}/file`, formData)
+  return response.data.data
+}
+
+export async function downloadPaymentMerchantParamFile(merchantId: number, paramId: number): Promise<Blob> {
+  const response = await http.get(`/payment/merchants/${merchantId}/params/${paramId}/file`, {
+    responseType: 'blob',
+  })
+  return response.data
+}
+
 export async function savePaymentMerchantCredential(merchantId: number,
                                                     request: PaymentMerchantCredentialSaveRequest): Promise<PaymentMerchantCredential[]> {
   const response = await http.post<ApiResponse<PaymentMerchantCredential[]>>(`/payment/merchants/${merchantId}/credentials`, request)
@@ -108,33 +142,44 @@ export async function fetchPaymentMerchantSecrets(merchantId: number): Promise<P
   return response.data.data
 }
 
+export async function downloadPaymentMerchantSecretFile(merchantId: number, secretId: number): Promise<Blob> {
+  const response = await http.get(`/payment/merchants/${merchantId}/secrets/${secretId}/file`, {
+    responseType: 'blob',
+  })
+  return response.data
+}
+
 export async function createPaymentMerchantSecret(merchantId: number,
                                                   request: PaymentSecretSaveRequest): Promise<PaymentSecretSummary[]> {
   const response = await http.post<ApiResponse<PaymentSecretSummary[]>>(`/payment/merchants/${merchantId}/secrets`, request)
   return response.data.data
 }
 
+export async function updatePaymentMerchantSecret(merchantId: number,
+                                                  secretId: number,
+                                                  request: PaymentSecretSaveRequest): Promise<PaymentSecretSummary[]> {
+  const response = await http.put<ApiResponse<PaymentSecretSummary[]>>(`/payment/merchants/${merchantId}/secrets/${secretId}`, request)
+  return response.data.data
+}
+
 export async function createPaymentMerchantSecretFromFile(merchantId: number,
                                                           request: PaymentSecretFileUploadRequest): Promise<PaymentSecretSummary[]> {
-  const formData = new FormData()
-  formData.append('secretName', request.secretName)
-  formData.append('secretType', request.secretType)
-  formData.append('fileValueType', request.fileValueType)
-  formData.append('file', request.file)
-  formData.append('activateNow', String(request.activateNow ?? true))
-  if (request.validFrom) {
-    formData.append('validFrom', request.validFrom)
+  const formData = secretFileFormData(request)
+  if (request.file) {
+    formData.append('file', request.file)
   }
-  if (request.validTo) {
-    formData.append('validTo', request.validTo)
+  const response = await http.post<ApiResponse<PaymentSecretSummary[]>>(`/payment/merchants/${merchantId}/secrets/file`, formData)
+  return response.data.data
+}
+
+export async function updatePaymentMerchantSecretFromFile(merchantId: number,
+                                                          secretId: number,
+                                                          request: PaymentSecretFileUploadRequest): Promise<PaymentSecretSummary[]> {
+  const formData = secretFileFormData(request)
+  if (request.file) {
+    formData.append('file', request.file)
   }
-  if (request.remark) {
-    formData.append('remark', request.remark)
-  }
-  const response = await http.post<ApiResponse<PaymentSecretSummary[]>>(
-    `/payment/merchants/${merchantId}/secrets/file`,
-    formData,
-  )
+  const response = await http.put<ApiResponse<PaymentSecretSummary[]>>(`/payment/merchants/${merchantId}/secrets/${secretId}/file`, formData)
   return response.data.data
 }
 
@@ -175,6 +220,37 @@ export async function updatePaymentBinding(id: number,
 export async function fetchPaymentPurposes(): Promise<PaymentPurposeOption[]> {
   const response = await http.get<ApiResponse<PaymentPurposeOption[]>>('/payment/purposes')
   return response.data.data
+}
+
+function secretFileFormData(request: PaymentSecretFileUploadRequest) {
+  const formData = new FormData()
+  formData.append('secretName', request.secretName)
+  formData.append('secretType', request.secretType)
+  formData.append('fileValueType', request.fileValueType)
+  formData.append('status', request.status)
+  if (request.validFrom) {
+    formData.append('validFrom', request.validFrom)
+  }
+  if (request.validTo) {
+    formData.append('validTo', request.validTo)
+  }
+  if (request.remark) {
+    formData.append('remark', request.remark)
+  }
+  return formData
+}
+
+function paramFileFormData(request: PaymentMerchantParamFileUploadRequest) {
+  const formData = new FormData()
+  if (request.paramKey) {
+    formData.append('paramKey', request.paramKey)
+  }
+  formData.append('valueType', request.valueType)
+  formData.append('fileValueType', request.fileValueType)
+  if (request.remark) {
+    formData.append('remark', request.remark)
+  }
+  return formData
 }
 
 function normalizePaymentBinding<T extends Partial<PaymentProjectBinding>>(binding: T): T & PaymentProjectBinding {
