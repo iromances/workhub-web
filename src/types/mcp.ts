@@ -1,5 +1,90 @@
 export type McpResourceType = 'DATABASE' | 'SERVER'
 
+export interface McpBastion {
+  id: number
+  name: string
+  host: string
+  port: number
+  username: string
+  passwordConfigured: boolean
+  identityFile: string | null
+  enabled: boolean
+  remark: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface McpBastionSaveRequest {
+  name: string
+  host: string
+  port: number
+  username: string
+  password?: string
+  identityFile?: string
+  enabled: boolean
+  remark?: string
+}
+
+export interface McpBastionConnectionTestRequest {
+  id?: number
+  host: string
+  port: number
+  username: string
+  password?: string
+  identityFile?: string
+}
+
+export interface McpBastionConnectionTestResult {
+  success: boolean
+  durationMs: number
+  message: string
+  testedAt: string
+}
+
+export interface McpDatabaseConnectionTestRequest {
+  id?: number
+  host: string
+  port: number
+  databaseSchema?: string
+  username: string
+  password?: string
+  sshBastionEnabled: boolean
+  bastionId?: number
+}
+
+export interface McpDatabaseConnectionTestResult {
+  success: boolean
+  connectionMode: 'DIRECT' | 'BASTION'
+  failureStage: 'BASTION' | 'DATABASE' | null
+  bastionName: string | null
+  durationMs: number
+  message: string
+  testedAt: string
+}
+
+export interface McpServerConnectionTestRequest {
+  id?: number
+  host: string
+  port: number
+  username: string
+  sshPassword?: string
+  sshIdentityFile?: string
+  sshBastionEnabled: boolean
+  sshBastionHost?: string
+  sshBastionPort?: number
+  sshBastionUser?: string
+  sshBastionPassword?: string
+}
+
+export interface McpServerConnectionTestResult {
+  success: boolean
+  connectionMode: 'DIRECT' | 'BASTION'
+  failureStage: 'BASTION' | 'SERVER' | null
+  durationMs: number
+  message: string
+  testedAt: string
+}
+
 export interface McpResourceProfile {
   key: string
   maxRows?: number | null
@@ -13,6 +98,8 @@ export interface McpResource {
   id: number
   resourceType: McpResourceType
   targetKey: string
+  publicResource: boolean
+  featureTags: string[]
   businessLineCode: string
   businessLineCodes: string[]
   environmentCode: string
@@ -26,6 +113,8 @@ export interface McpResource {
   passwordConfigured: boolean
   sshPasswordConfigured: boolean
   sshBastionEnabled: boolean
+  bastionId: number | null
+  bastionName: string | null
   sshBastionHost: string | null
   sshBastionPort: number | null
   sshBastionUser: string | null
@@ -43,6 +132,8 @@ export interface McpResource {
 export interface McpResourceSaveRequest {
   resourceType: McpResourceType
   targetKey?: string
+  publicResource?: boolean
+  featureTags?: string[]
   businessLineCode?: string
   businessLineCodes: string[]
   environmentCode: string
@@ -56,6 +147,7 @@ export interface McpResourceSaveRequest {
   password?: string
   sshPassword?: string
   sshBastionEnabled?: boolean
+  bastionId?: number
   sshBastionHost?: string
   sshBastionPort?: number
   sshBastionUser?: string

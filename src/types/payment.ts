@@ -4,6 +4,7 @@ export interface PaymentChannelSummary {
   name: string
   vendorName: string
   status: string
+  description: string | null
 }
 
 export interface PaymentChannelDetail {
@@ -35,6 +36,7 @@ export interface PaymentMerchantSummary {
   environment: string
   purposeCodes: string[]
   status: string
+  remark: string | null
 }
 
 export interface PaymentMerchantParam {

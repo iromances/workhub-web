@@ -202,9 +202,6 @@ onMounted(async () => {
 <template>
   <div class="page-card table-card">
     <div class="page-header">
-      <div>
-        <h1 class="page-title">角色管理</h1>
-      </div>
       <el-button v-if="canCreate" type="primary" @click="openCreate">新增角色</el-button>
     </div>
 

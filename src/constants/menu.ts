@@ -9,6 +9,7 @@ export const menuItems: MenuItem[] = [
     path: '/ops',
     children: [
       { key: 'ops-monitors', label: '业务监测', path: '/ops/monitors', permission: 'ops:monitor:view' },
+      { key: 'ops-accounting', label: '账务监测', path: '/ops/accounting', permission: 'ops:accounting:view' },
       { key: 'ops-system-alerts', label: '系统预警', path: '/ops/system-alerts', permission: 'ops:system-alert:view' },
       { key: 'ops-mcp-resources', label: 'MCP', path: '/ops/mcp-resources', permission: 'ops:mcp-resource:view' },
     ],
@@ -31,6 +32,7 @@ export const menuItems: MenuItem[] = [
     path: '/system',
     children: [
       { key: 'system-config', label: '系统配置', path: '/system-config', permission: 'system:config:view' },
+      { key: 'system-ai-config', label: 'AI配置', path: '/system/ai-config', permission: 'system:ai-config:view' },
       { key: 'system-users', label: '账号管理', path: '/system/users', permission: 'system:user:view' },
       { key: 'system-roles', label: '角色管理', path: '/system/roles', permission: 'system:role:view' },
       { key: 'system-audits', label: '权限审计', path: '/system/audits', permission: 'system:audit:view' },

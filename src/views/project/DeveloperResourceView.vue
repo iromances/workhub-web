@@ -116,7 +116,6 @@ onMounted(loadDevelopers)
   <div class="page-card table-card">
     <div class="page-header">
       <div>
-        <h1 class="page-title">团队</h1>
         <p class="page-desc">维护任务评估负责人下拉框的独立人员资源，不和项目或业务线绑定。</p>
       </div>
       <el-button v-if="canCreate" type="primary" @click="openCreate">新增研发人员</el-button>

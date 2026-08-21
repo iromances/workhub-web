@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { ArrowDown, Bell } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -44,13 +45,21 @@ const flattenedMenuItems = computed(() => {
 const currentPageTitle = computed(() => String(route.meta.title || '工作台'))
 const notificationDrawerVisible = ref(false)
 const passwordDialogVisible = ref(false)
+const profileDialogVisible = ref(false)
 const passwordSubmitting = ref(false)
+const profileSubmitting = ref(false)
+const avatarUploading = ref(false)
+const notificationReadAllSubmitting = ref(false)
+const avatarInputRef = ref<HTMLInputElement | null>(null)
 const notifications = ref<NotificationItem[]>([])
 const unreadNotificationCount = ref(0)
 const passwordForm = ref({
   oldPassword: '',
   newPassword: '',
   confirmPassword: '',
+})
+const profileForm = ref({
+  displayName: '',
 })
 
 function resolveMenuItem(path: string): MenuItem {
@@ -112,6 +121,27 @@ function logout() {
   router.push('/login')
 }
 
+function handleUserCommand(command: string) {
+  if (command === 'profile') {
+    openProfileDialog()
+    return
+  }
+  if (command === 'password') {
+    openPasswordDialog()
+    return
+  }
+  if (command === 'logout') {
+    logout()
+  }
+}
+
+function openProfileDialog() {
+  profileForm.value = {
+    displayName: authStore.displayName || authStore.userName,
+  }
+  profileDialogVisible.value = true
+}
+
 function openPasswordDialog() {
   passwordForm.value = {
     oldPassword: '',
@@ -119,6 +149,59 @@ function openPasswordDialog() {
     confirmPassword: '',
   }
   passwordDialogVisible.value = true
+}
+
+async function submitProfile() {
+  if (!profileForm.value.displayName.trim()) {
+    ElMessage.warning('请填写昵称')
+    return
+  }
+  profileSubmitting.value = true
+  try {
+    await authStore.updateProfile({
+      displayName: profileForm.value.displayName.trim(),
+    })
+    ElMessage.success('个人信息已保存')
+    profileDialogVisible.value = false
+  } catch (error) {
+    ElMessage.error('保存个人信息失败')
+    console.error(error)
+  } finally {
+    profileSubmitting.value = false
+  }
+}
+
+function openAvatarPicker() {
+  avatarInputRef.value?.click()
+}
+
+async function handleAvatarSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) {
+    return
+  }
+  if (!file.type.startsWith('image/')) {
+    ElMessage.warning('请选择图片文件')
+    input.value = ''
+    return
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    ElMessage.warning('头像文件不能超过 2MB')
+    input.value = ''
+    return
+  }
+  avatarUploading.value = true
+  try {
+    await authStore.uploadAvatar(file)
+    ElMessage.success('头像已上传')
+  } catch (error) {
+    ElMessage.error('头像上传失败')
+    console.error(error)
+  } finally {
+    avatarUploading.value = false
+    input.value = ''
+  }
 }
 
 async function submitPassword() {
@@ -177,8 +260,21 @@ async function readNotification(item: NotificationItem) {
 }
 
 async function readAllNotifications() {
-  await markAllNotificationsRead()
-  await loadNotifications()
+  if (notifications.value.length === 0 || notificationReadAllSubmitting.value) {
+    return
+  }
+  notificationReadAllSubmitting.value = true
+  try {
+    await markAllNotificationsRead()
+    notifications.value = []
+    unreadNotificationCount.value = 0
+    ElMessage.success('站内信已全部标记为已读')
+  } catch (error) {
+    ElMessage.error('全部已读操作失败')
+    console.error(error)
+  } finally {
+    notificationReadAllSubmitting.value = false
+  }
 }
 
 async function copyNotificationContent(item: NotificationItem) {
@@ -278,12 +374,32 @@ onMounted(loadNotifications)
           </div>
         </nav>
         <div class="header-actions">
-          <el-badge :value="unreadNotificationCount" :hidden="unreadNotificationCount === 0">
-            <el-button plain @click="openNotifications">通知</el-button>
-          </el-badge>
-          <el-button plain @click="openPasswordDialog">改密</el-button>
-          <el-tag type="success" effect="dark">{{ authStore.displayName || authStore.userName || '未登录' }}</el-tag>
-          <el-button type="primary" plain @click="logout">退出</el-button>
+          <el-tooltip content="通知" placement="bottom">
+            <el-badge :value="unreadNotificationCount" :hidden="unreadNotificationCount === 0">
+              <el-button circle plain aria-label="通知" @click="openNotifications">
+                <el-icon><Bell /></el-icon>
+              </el-button>
+            </el-badge>
+          </el-tooltip>
+          <el-dropdown trigger="click" @command="handleUserCommand">
+            <button class="user-menu-trigger" type="button">
+              <img
+                v-if="authStore.avatarDisplayUrl"
+                class="user-menu-avatar"
+                :src="authStore.avatarDisplayUrl"
+                alt=""
+              >
+              <span class="user-menu-name">{{ authStore.userName || '未登录' }}</span>
+              <el-icon class="user-menu-arrow"><ArrowDown /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="profile">个人信息</el-dropdown-item>
+                <el-dropdown-item command="password">修改密码</el-dropdown-item>
+                <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </el-header>
 
@@ -299,7 +415,16 @@ onMounted(loadNotifications)
     <el-drawer v-model="notificationDrawerVisible" title="站内信" size="420px">
       <div class="notification-toolbar">
         <el-button size="small" @click="loadNotifications">刷新</el-button>
-        <el-button size="small" type="primary" plain @click="readAllNotifications">全部已读</el-button>
+        <el-button
+          size="small"
+          type="primary"
+          plain
+          :loading="notificationReadAllSubmitting"
+          :disabled="notifications.length === 0"
+          @click="readAllNotifications"
+        >
+          全部已读
+        </el-button>
       </div>
       <el-empty v-if="notifications.length === 0" description="暂无站内信" />
       <div v-else class="notification-list">
@@ -321,6 +446,45 @@ onMounted(loadNotifications)
         </article>
       </div>
     </el-drawer>
+
+    <el-dialog v-model="profileDialogVisible" title="个人信息" width="420px">
+      <el-form label-position="top">
+        <el-form-item label="头像">
+          <div class="profile-avatar-row">
+            <img
+              v-if="authStore.avatarDisplayUrl"
+              class="profile-avatar-image"
+              :src="authStore.avatarDisplayUrl"
+              alt=""
+            >
+            <div v-else class="profile-avatar-placeholder">
+              {{ (authStore.userName || 'WH').slice(0, 2).toUpperCase() }}
+            </div>
+            <div class="profile-avatar-actions">
+              <el-button :loading="avatarUploading" @click="openAvatarPicker">上传头像</el-button>
+              <span class="profile-avatar-meta">PNG、JPG、GIF、WebP，最大 2MB</span>
+            </div>
+            <input
+              ref="avatarInputRef"
+              class="profile-avatar-input"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              @change="handleAvatarSelected"
+            >
+          </div>
+        </el-form-item>
+        <el-form-item label="用户名">
+          <el-input :model-value="authStore.userName" disabled />
+        </el-form-item>
+        <el-form-item label="昵称">
+          <el-input v-model="profileForm.displayName" maxlength="64" show-word-limit />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="profileDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="profileSubmitting" @click="submitProfile">保存</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="passwordDialogVisible" title="修改密码" width="420px">
       <el-form label-position="top">
@@ -441,6 +605,85 @@ onMounted(loadNotifications)
   align-items: center;
   flex: 0 0 auto;
   gap: 12px;
+}
+
+.user-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(15, 118, 110, 0.24);
+  border-radius: 8px;
+  background: #f0fdfa;
+  color: #0f766e;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.user-menu-avatar {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.user-menu-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu-arrow {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.profile-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.profile-avatar-image,
+.profile-avatar-placeholder {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+}
+
+.profile-avatar-image {
+  object-fit: cover;
+}
+
+.profile-avatar-placeholder {
+  display: grid;
+  place-items: center;
+  background: #f0fdfa;
+  color: #0f766e;
+  font-weight: 800;
+}
+
+.profile-avatar-actions {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.profile-avatar-meta {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.profile-avatar-input {
+  display: none;
 }
 
 .notification-toolbar {

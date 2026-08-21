@@ -60,12 +60,6 @@ onMounted(async () => {
 
 <template>
   <div class="page-card table-card">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">权限审计</h1>
-      </div>
-    </div>
-
     <el-tabs v-model="activeTab">
       <el-tab-pane label="登录日志" name="login">
         <el-form inline class="filter-form" @submit.prevent="loadLoginLogs">

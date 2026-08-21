@@ -204,7 +204,7 @@ function formatDate(date: Date) {
 function resetLogFilters() {
   const end = new Date()
   const start = new Date()
-  start.setDate(end.getDate() - 7)
+  start.setDate(end.getDate() - 6)
   logFilters.dateRange = [formatDate(start), formatDate(end)]
   logFilters.author = ''
   logFilters.executorAppName = ''
@@ -306,7 +306,6 @@ onMounted(async () => {
   <div class="page-card ops-page">
     <div class="page-header">
       <div>
-        <h1 class="page-title">业务监测</h1>
         <p class="page-desc">维护本地 XXL-JOB 监测配置，首页不采集远端调度库统计。</p>
       </div>
       <div class="header-buttons">
@@ -342,7 +341,12 @@ onMounted(async () => {
         </el-form>
 
         <el-table v-loading="loading" :data="monitors" row-key="id">
-          <el-table-column prop="businessLineCode" label="业务线" width="140" />
+          <el-table-column label="业务线" min-width="170">
+            <template #default="{ row }">
+              <div>{{ row.businessLineCode }}</div>
+              <div class="business-line-name">{{ row.businessLineName }}</div>
+            </template>
+          </el-table-column>
           <el-table-column label="环境" width="90">
             <template #default="{ row }">
               {{ environmentOptions.find((item) => item.value === row.environmentCode)?.label || row.environmentCode }}
@@ -361,7 +365,7 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column label="上次状态" width="110">
             <template #default="{ row }">
-              <el-tag :type="statusTag(row.lastStatus)">{{ row.lastStatus || '未采集' }}</el-tag>
+              <el-tag :type="statusTag(row.lastStatus)">{{ row.lastStatusName }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column prop="lastMessage" label="上次消息" min-width="220" show-overflow-tooltip />
@@ -535,6 +539,12 @@ onMounted(async () => {
 
 .drawer-form {
   padding-right: 8px;
+}
+
+.business-line-name {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .detail-summary {

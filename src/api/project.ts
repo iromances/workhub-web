@@ -1,5 +1,5 @@
 import type { ApiResponse, PageResponse } from '@/types/http'
-import type { ProjectDetail, ProjectGroup, ProjectInvolvedSystem, ProjectSummary } from '@/types/work-item'
+import type { ProjectDetail, ProjectGroup, ProjectGroupAccessConfig, ProjectInvolvedSystem, ProjectSummary } from '@/types/work-item'
 
 import http from './http'
 
@@ -62,6 +62,7 @@ export interface ProjectGroupSaveRequest {
   gitlabGroupName?: string
   description?: string
   enabled?: boolean
+  accessConfigs?: Array<Omit<ProjectGroupAccessConfig, 'id' | 'createdAt' | 'updatedAt'>>
 }
 
 export async function createProjectGroup(request: ProjectGroupSaveRequest): Promise<ProjectGroup> {
@@ -148,6 +149,7 @@ function normalizeBusinessLine<T extends Partial<ProjectGroup>>(businessLine: T)
     businessLineCode: code,
     businessLineName: name,
     groupName: name,
+    accessConfigs: Array.isArray(businessLine.accessConfigs) ? businessLine.accessConfigs : [],
   } as T & ProjectGroup
 }
 
@@ -184,6 +186,7 @@ function toBusinessLinePayload(request: ProjectGroupSaveRequest) {
     gitlabGroupName: request.gitlabGroupName,
     description: request.description,
     enabled: request.enabled,
+    accessConfigs: request.accessConfigs,
   }
 }
 

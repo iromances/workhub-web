@@ -64,6 +64,12 @@ const router = createRouter({
           meta: { title: '系统配置', activeMenu: '/system-config', permission: 'system:config:view' },
         },
         {
+          path: 'system/ai-config',
+          name: 'system-ai-config',
+          component: () => import('@/views/system/AiConfigView.vue'),
+          meta: { title: 'AI配置', activeMenu: '/system/ai-config', permission: 'system:ai-config:view' },
+        },
+        {
           path: 'system/users',
           name: 'system-users',
           component: () => import('@/views/system/UserManagementView.vue'),
@@ -90,6 +96,12 @@ const router = createRouter({
           name: 'ops-monitors',
           component: () => import('@/views/ops/OpsMonitorView.vue'),
           meta: { title: '业务监测', activeMenu: '/ops/monitors', permission: 'ops:monitor:view' },
+        },
+        {
+          path: 'ops/accounting',
+          name: 'ops-accounting',
+          component: () => import('@/views/ops/AccountingMonitorView.vue'),
+          meta: { title: '账务监测', activeMenu: '/ops/accounting', permission: 'ops:accounting:view' },
         },
         {
           path: 'ops/system-alerts',

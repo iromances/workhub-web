@@ -5,6 +5,9 @@ import type {
   OpsMonitorSaveRequest,
   OpsMonitorType,
   SystemAlertDashboard,
+  SystemAlertEventCategory,
+  SystemAlertRule,
+  SystemAlertRuleSaveRequest,
   SystemAlertSubsystem,
   SystemAlertSubsystemSaveRequest,
   XxlJobDashboard,
@@ -99,6 +102,7 @@ export async function fetchSystemAlertDashboard(params?: {
   environmentCode?: string
   serviceName?: string
   level?: string
+  eventCategory?: SystemAlertEventCategory
   startTime?: string
   endTime?: string
   page?: number
@@ -130,4 +134,26 @@ export async function updateSystemAlertSubsystem(id: number, request: SystemAler
 
 export async function deleteSystemAlertSubsystem(id: number): Promise<void> {
   await http.delete<ApiResponse<void>>(`/ops/system-alerts/subsystems/${id}`)
+}
+
+export async function fetchSystemAlertRules(params?: {
+  enabledOnly?: boolean
+  keyword?: string
+}): Promise<SystemAlertRule[]> {
+  const response = await http.get<ApiResponse<PageResponse<SystemAlertRule>>>('/ops/system-alerts/rules', { params })
+  return response.data.data.items
+}
+
+export async function createSystemAlertRule(request: SystemAlertRuleSaveRequest): Promise<SystemAlertRule> {
+  const response = await http.post<ApiResponse<SystemAlertRule>>('/ops/system-alerts/rules', request)
+  return response.data.data
+}
+
+export async function updateSystemAlertRule(id: number, request: SystemAlertRuleSaveRequest): Promise<SystemAlertRule> {
+  const response = await http.put<ApiResponse<SystemAlertRule>>(`/ops/system-alerts/rules/${id}`, request)
+  return response.data.data
+}
+
+export async function deleteSystemAlertRule(id: number): Promise<void> {
+  await http.delete<ApiResponse<void>>(`/ops/system-alerts/rules/${id}`)
 }

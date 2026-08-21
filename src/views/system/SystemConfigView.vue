@@ -114,8 +114,7 @@ onMounted(loadConfigs)
   <div class="page-card table-card">
     <div class="page-header">
       <div>
-        <h1 class="page-title">系统配置</h1>
-        <p class="page-desc">配置 GitLab 仓库地址、Access Token 等系统参数；敏感值只脱敏展示。</p>
+        <p class="page-desc">配置 GitLab、ELK 等系统参数；密码、Token、API Key 等敏感值只脱敏展示。</p>
       </div>
       <el-button v-if="canCreate" type="primary" @click="openCreate">新增配置</el-button>
     </div>
@@ -125,6 +124,13 @@ onMounted(loadConfigs)
       show-icon
       :closable="false"
       title="GitLab 配置约定：configGroup 使用 gitlab.业务线；configKey 使用 repoUrl 和 accessToken。accessToken 的 valueType 请选择 SECRET。"
+    />
+    <el-alert
+      class="config-tip"
+      type="info"
+      show-icon
+      :closable="false"
+      title="ELK 配置约定：configGroup 使用 elk.alert；先配置 baseUrl、authType 和认证信息，最后设置 enabled=true。日志索引模式在“系统预警 → 关注子系统”中维护；password、apiKey 的 valueType 必须选择 SECRET。"
     />
 
     <el-form inline class="filter-form" @submit.prevent="loadConfigs">
@@ -210,6 +216,10 @@ onMounted(loadConfigs)
 
 .filter-form {
   margin-top: 16px;
+}
+
+.config-tip {
+  margin-top: 12px;
 }
 
 </style>

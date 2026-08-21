@@ -388,7 +388,6 @@ onMounted(async () => {
   <div class="page-card table-card">
     <div class="page-header">
       <div>
-        <h1 class="page-title">工作项</h1>
         <p class="page-desc">需求、缺陷、运维、任务统一在一个模型中流转。</p>
       </div>
       <el-button v-if="canCreate" type="primary" @click="openCreate">新建工作项</el-button>

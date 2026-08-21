@@ -5,6 +5,7 @@ export interface OpsMonitor {
   monitorType: OpsMonitorType
   monitorKey: string
   businessLineCode: string
+  businessLineName: string
   environmentCode: string
   name: string
   adminBaseUrl: string | null
@@ -19,6 +20,7 @@ export interface OpsMonitor {
   mqLagThreshold: number | null
   enabled: boolean
   lastStatus: string | null
+  lastStatusName: string
   lastMessage: string | null
   lastCheckedAt: string | null
   remark: string | null
@@ -126,6 +128,7 @@ export interface SystemAlertSubsystem {
   environmentCode: string
   subsystemName: string
   serviceName: string
+  indexPatterns: string[]
   enabled: boolean
   remark: string | null
   createdAt: string
@@ -137,6 +140,7 @@ export interface SystemAlertSubsystemSaveRequest {
   environmentCode: string
   subsystemName: string
   serviceName: string
+  indexPatterns: string[]
   enabled: boolean
   remark?: string
 }
@@ -150,6 +154,39 @@ export interface SystemAlertSubsystemSummary {
   latestOccurredAt: string | null
 }
 
+export type SystemAlertEventCategory = 'SYSTEM_ERROR' | 'SLOW_SQL'
+
+export type SystemAlertRuleAction = 'IGNORE' | 'SLOW_SQL' | 'SYSTEM_ERROR'
+
+export type SystemAlertRuleMatchScope = 'MESSAGE' | 'ALL_TEXT'
+
+export type SystemAlertRuleMatchMode = 'ANY' | 'ALL'
+
+export interface SystemAlertRule {
+  id: number
+  ruleName: string
+  action: SystemAlertRuleAction
+  matchScope: SystemAlertRuleMatchScope
+  matchMode: SystemAlertRuleMatchMode
+  keywords: string[]
+  priority: number
+  enabled: boolean
+  remark?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface SystemAlertRuleSaveRequest {
+  ruleName: string
+  action: SystemAlertRuleAction
+  matchScope: SystemAlertRuleMatchScope
+  matchMode: SystemAlertRuleMatchMode
+  keywords: string[]
+  priority: number
+  enabled: boolean
+  remark?: string
+}
+
 export interface SystemAlertEvent {
   id: number
   businessLineCode: string
@@ -157,6 +194,7 @@ export interface SystemAlertEvent {
   subsystemName: string | null
   serviceName: string
   level: string
+  eventCategory: SystemAlertEventCategory
   title: string | null
   message: string | null
   errorType: string | null

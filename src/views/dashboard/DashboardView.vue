@@ -15,6 +15,10 @@ const loading = ref(false)
 const reportGenerating = ref(false)
 const businessLineDemandType = ref<DemandTypeFilter>('ALL')
 const dashboard = ref<IntakeDashboard | null>(null)
+let dashboardFilterRevision = 0
+let dashboardRequestSequence = 0
+let dashboardLoadSequence = 0
+let latestAppliedDashboardRequest = 0
 
 const businessLineDemandTypeOptions: DashboardDemandTypeOption[] = [
   { value: 'ALL', label: '所有' },
@@ -29,15 +33,41 @@ const businessLineStats = computed(() => dashboard.value?.businessLineStats || [
 const businessLineFilterLabel = computed(() => dashboard.value?.demandTypeLabel || '所有')
 
 async function loadDashboard() {
+  const requestedDemandType = businessLineDemandType.value
+  const filterRevision = dashboardFilterRevision
+  const requestSequence = ++dashboardRequestSequence
+  const loadSequence = ++dashboardLoadSequence
   loading.value = true
   try {
-    dashboard.value = await fetchIntakeDashboard(businessLineDemandType.value)
+    const refreshedDashboard = await fetchIntakeDashboard(requestedDemandType)
+    syncDashboardIfCurrent(refreshedDashboard, requestedDemandType, filterRevision, requestSequence)
   } catch (error) {
-    ElMessage.error('加载工作台数据失败')
+    if (filterRevision === dashboardFilterRevision && requestedDemandType === businessLineDemandType.value) {
+      ElMessage.error('加载工作台数据失败')
+    }
     console.error(error)
   } finally {
-    loading.value = false
+    if (loadSequence === dashboardLoadSequence) {
+      loading.value = false
+    }
   }
+}
+
+function syncDashboardIfCurrent(
+  refreshedDashboard: IntakeDashboard,
+  requestedDemandType: DemandTypeFilter,
+  filterRevision: number,
+  requestSequence: number,
+) {
+  if (
+    filterRevision !== dashboardFilterRevision
+    || requestedDemandType !== businessLineDemandType.value
+    || requestSequence < latestAppliedDashboardRequest
+  ) {
+    return
+  }
+  latestAppliedDashboardRequest = requestSequence
+  dashboard.value = refreshedDashboard
 }
 
 function formatDisplayTime(value: string | null | undefined) {
@@ -60,12 +90,14 @@ async function generateProgressReportScreenshot() {
   }
   reportGenerating.value = true
   try {
+    const requestedDemandType = businessLineDemandType.value
+    const filterRevision = dashboardFilterRevision
+    const requestSequence = ++dashboardRequestSequence
     const generatedAt = new Date()
-    if (!dashboard.value?.progressReport) {
-      throw new Error('工作台数据尚未加载')
-    }
-    await downloadProjectProgressReportScreenshot(dashboard.value.progressReport, buildProjectProgressReportFileName(generatedAt))
-    ElMessage.success('项目总体进度报告截图已生成')
+    const refreshedDashboard = await fetchIntakeDashboard(requestedDemandType)
+    await downloadProjectProgressReportScreenshot(refreshedDashboard.progressReport, buildProjectProgressReportFileName(generatedAt))
+    syncDashboardIfCurrent(refreshedDashboard, requestedDemandType, filterRevision, requestSequence)
+    ElMessage.success('项目进度报告截图已生成')
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '生成报告截图失败')
     console.error(error)
@@ -75,14 +107,16 @@ async function generateProgressReportScreenshot() {
 }
 
 onMounted(loadDashboard)
-watch(businessLineDemandType, loadDashboard)
+watch(businessLineDemandType, () => {
+  dashboardFilterRevision += 1
+  loadDashboard()
+})
 </script>
 
 <template>
   <div>
     <div class="page-header">
       <div>
-        <h1 class="page-title">工作台</h1>
         <p class="page-desc">按需求阶段和业务线快速查看未启动、开发中、测试中和待上线的事项。</p>
       </div>
       <el-button
@@ -161,7 +195,7 @@ watch(businessLineDemandType, loadDashboard)
               </div>
               <div class="demand-meta">
                 <span>审批编号：{{ item.approvalCode || '-' }}</span>
-                <span>提出人：{{ item.proposerName || item.senderName || '-' }}</span>
+                <span>提出人：{{ item.proposerName || '-' }}</span>
                 <span>需求类型：{{ item.requirementType || '-' }}</span>
                 <span>业务线：{{ item.businessLine || '-' }}</span>
               </div>

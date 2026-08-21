@@ -23,10 +23,26 @@ export interface ProjectGroup {
   businessLineName: string
   groupName: string
   gitlabGroupName: string | null
+  accessConfigs: ProjectGroupAccessConfig[]
   description: string | null
   enabled: boolean
   createdAt: string
   updatedAt: string
+}
+
+export type ProjectGroupEndpointType = 'OPERATIONS' | 'CLIENT' | 'GATEWAY' | 'OTHER'
+
+export interface ProjectGroupAccessConfig {
+  id: number | null
+  environmentCode: string
+  endpointType: ProjectGroupEndpointType
+  endpointName: string
+  endpointUrl: string
+  pathPrefix: string | null
+  sortOrder: number
+  enabled: boolean
+  createdAt: string | null
+  updatedAt: string | null
 }
 
 export interface ProjectInvolvedSystem {
@@ -187,7 +203,7 @@ export interface ProjectProgressReportSummary {
   statuses: string[]
 }
 
-export interface ProjectProgressReportDemand {
+export interface ProjectProgressReportDemandBase {
   id: number
   title: string
   businessLine: string
@@ -197,7 +213,17 @@ export interface ProjectProgressReportDemand {
   receivedAt: string
 }
 
-export interface ProjectProgressReportReleasedDemand extends ProjectProgressReportDemand {
+export interface ProjectProgressReportDateItem {
+  label: string
+  value: string
+}
+
+export interface ProjectProgressReportDemand extends ProjectProgressReportDemandBase {
+  dateItems?: ProjectProgressReportDateItem[] | null
+}
+
+export interface ProjectProgressReportReleasedDemand extends ProjectProgressReportDemandBase {
+  requirementType?: string | null
   releasedTime: string
 }
 

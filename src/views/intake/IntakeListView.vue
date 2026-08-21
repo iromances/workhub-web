@@ -1768,9 +1768,9 @@ async function openRequirementFolder(row: IntakeSummary) {
   requirementFolderOpeningId.value = row.id
   try {
     const result = await openIntakeRequirementFolder(row.id)
-    ElMessage.success(`已打开需求文件夹：${result.folderPath}`)
+    ElMessage.success(`已打开需求文件：${result.folderPath}`)
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '打开需求文件夹失败'))
+    ElMessage.error(resolveErrorMessage(error, '打开需求文件失败'))
     console.error(error)
   } finally {
     requirementFolderOpeningId.value = null
@@ -1781,9 +1781,9 @@ async function openDevelopmentPlanFolder(row: IntakeSummary) {
   developmentPlanFolderOpeningId.value = row.id
   try {
     const result = await openIntakeDevelopmentPlanFolder(row.id)
-    ElMessage.success(`已打开开发方案文件夹：${result.folderPath}`)
+    ElMessage.success(`已打开开发方案：${result.folderPath}`)
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '打开开发方案文件夹失败'))
+    ElMessage.error(resolveErrorMessage(error, '打开开发方案失败'))
     console.error(error)
   } finally {
     developmentPlanFolderOpeningId.value = null
@@ -2757,10 +2757,6 @@ onMounted(loadBaseData)
 
 <template>
   <div class="page-card table-card">
-    <div class="page-header">
-      <h1 class="page-title">需求管理</h1>
-    </div>
-
     <el-form inline class="filter-form" @submit.prevent="handleSearch">
       <el-form-item label="需求编号">
         <el-input
@@ -2930,11 +2926,11 @@ onMounted(loadBaseData)
               {{ formatDisplayDate(effectiveDevelopmentDate(row)) }}
               <el-tag v-if="isDevelopmentDateEstimated(row)" size="small" type="info" effect="plain">预估</el-tag>
             </span>
-            <small>开发工时：{{ firstDisplayValue(row.developmentEstimatedEffort) }}</small>
+            <small>开发：{{ firstDisplayValue(row.actualEffort, row.developmentEstimatedEffort) }}</small>
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="测试日期" width="180">
+      <el-table-column label="测试日期" width="150">
         <template #default="{ row }">
           <div class="date-effort-cell">
             <small>
@@ -2949,16 +2945,15 @@ onMounted(loadBaseData)
               </el-tag>
             </small>
             <small>完成：{{ formatDisplayDate(buildTestingDateDisplay(row).completed.value) }}</small>
-            <small>开发：{{ firstDisplayValue(row.actualEffort, row.developmentEstimatedEffort) }}</small>
             <small>测试：{{ firstDisplayValue(row.actualTestingEffort, row.testingEstimatedEffort) }}</small>
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="验收日期" width="150">
+      <el-table-column label="验收/上线" width="170">
         <template #default="{ row }">
           <div class="date-effort-cell">
-            <span>
-              {{ formatDisplayDate(buildAcceptanceDateDisplay(row).value) }}
+            <small>
+              验收：{{ formatDisplayDate(buildAcceptanceDateDisplay(row).value) }}
               <el-tag
                 v-if="buildAcceptanceDateDisplay(row).tag"
                 size="small"
@@ -2967,15 +2962,9 @@ onMounted(loadBaseData)
               >
                 {{ buildAcceptanceDateDisplay(row).tag }}
               </el-tag>
-            </span>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="上线日期" width="150">
-        <template #default="{ row }">
-          <div class="date-effort-cell">
-            <span>
-              {{ formatDisplayDate(buildReleaseDateDisplay(row).value) }}
+            </small>
+            <small>
+              上线：{{ formatDisplayDate(buildReleaseDateDisplay(row).value) }}
               <el-tag
                 v-if="buildReleaseDateDisplay(row).tag"
                 size="small"
@@ -2984,11 +2973,11 @@ onMounted(loadBaseData)
               >
                 {{ buildReleaseDateDisplay(row).tag }}
               </el-tag>
-            </span>
+            </small>
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="260" fixed="right" align="center">
+      <el-table-column label="操作" width="180" fixed="right" align="center">
         <template #default="{ row }">
           <div class="table-action-buttons">
             <el-button
@@ -3000,20 +2989,18 @@ onMounted(loadBaseData)
             >
               重新识别
             </el-button>
-            <el-button v-if="canViewDetail" link type="primary" @click="openDetail(row.id)">查看详情</el-button>
-            <el-button
-              v-if="canOpenZentao"
-              link
-              type="primary"
-              :disabled="!row.zentaoUrl?.trim()"
-              @click="openExternalLink(row.zentaoUrl)"
-            >
-              打开禅道
-            </el-button>
+            <el-button v-if="canViewDetail" link type="primary" @click="openDetail(row.id)">详情</el-button>
             <el-dropdown trigger="hover">
               <el-button link type="primary">操作</el-button>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item
+                  v-if="canOpenZentao"
+                  :disabled="!row.zentaoUrl?.trim()"
+                  @click="openExternalLink(row.zentaoUrl)"
+                >
+                  打开禅道
+                </el-dropdown-item>
                 <el-dropdown-item
                   v-if="resolveActionForRow(row)"
                   @click="openStageActionDialog(row)"
@@ -3046,14 +3033,14 @@ onMounted(loadBaseData)
                   :disabled="requirementFolderOpeningId === row.id"
                   @click="openRequirementFolder(row)"
                 >
-                  {{ requirementFolderOpeningId === row.id ? '打开中...' : '打开需求文件夹' }}
+                  {{ requirementFolderOpeningId === row.id ? '打开中...' : '需求文件' }}
                 </el-dropdown-item>
                 <el-dropdown-item
                   v-if="canOpenDevelopmentPlanFolder"
                   :disabled="developmentPlanFolderOpeningId === row.id"
                   @click="openDevelopmentPlanFolder(row)"
                 >
-                  {{ developmentPlanFolderOpeningId === row.id ? '打开中...' : '打开开发方案文件夹' }}
+                  {{ developmentPlanFolderOpeningId === row.id ? '打开中...' : '开发方案' }}
                 </el-dropdown-item>
                 <el-dropdown-item v-if="canDeleteRecord" divided class="danger-dropdown-item" @click="handleDelete(row)">删除</el-dropdown-item>
               </el-dropdown-menu>
@@ -3974,7 +3961,7 @@ onMounted(loadBaseData)
                     <div class="section-title">AI任务拆解参考</div>
                     <el-table :data="developmentAnalysis.draft.workItems" border>
                       <el-table-column prop="title" label="研发任务" min-width="220" />
-                      <el-table-column label="改地点" min-width="280">
+                      <el-table-column label="改动点" min-width="280">
                         <template #default="{ row }">
                           <ol v-if="displayChangePoints(row).length" class="task-change-points">
                             <li v-for="point in displayChangePoints(row)" :key="point">{{ point }}</li>
@@ -4125,13 +4112,13 @@ onMounted(loadBaseData)
                               />
                             </template>
                           </el-table-column>
-                          <el-table-column label="改地点" min-width="320">
+                          <el-table-column label="改动点" min-width="320">
                             <template #default="{ row }">
                               <el-input
                                 v-model="row.description"
                                 type="textarea"
                                 :rows="3"
-                                placeholder="简述改地点"
+                                placeholder="简述改动点"
                               />
                             </template>
                           </el-table-column>

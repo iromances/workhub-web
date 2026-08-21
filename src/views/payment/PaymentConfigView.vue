@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { DocumentCopy } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, type UploadFile, type UploadUserFile } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, reactive, ref } from 'vue'
 
 import {
   createPaymentBinding,
@@ -75,12 +76,20 @@ const merchantDialogVisible = ref(false)
 const merchantDetailDialogVisible = ref(false)
 const bindingDialogVisible = ref(false)
 const paramDialogVisible = ref(false)
+const pendingBindingDialogVisible = ref(false)
+const pendingParamDialogVisible = ref(false)
+const restoreMerchantDialogOnActivate = ref(false)
+const merchantDialogActiveTab = ref('basic')
+const merchantDialogLockedChannelId = ref<number | null>(null)
 const paramUploadFiles = ref<UploadUserFile[]>([])
+const pendingParamUploadFiles = ref<UploadUserFile[]>([])
 
 const editingChannelId = ref<number | null>(null)
 const editingMerchantId = ref<number | null>(null)
 const editingBindingId = ref<number | null>(null)
 const editingParamId = ref<number | null>(null)
+const editingPendingBindingId = ref<number | null>(null)
+const editingPendingParamId = ref<number | null>(null)
 const editingParamInputMode = ref<'TEXT' | 'FILE'>('TEXT')
 
 const channelFilters = reactive({
@@ -153,6 +162,42 @@ const paramForm = reactive({
   sensitive: false,
   remark: '',
 })
+
+interface PendingMerchantBinding {
+  id: number
+  projectId: number | null
+  projectGroup: string
+  purposeCodes: string[]
+  priority: number
+  defaultBinding: boolean
+  status: string
+  remark: string
+}
+
+interface PendingMerchantParam {
+  id: number
+  paramKey: string
+  inputMode: 'TEXT' | 'FILE'
+  paramValue: string
+  file: File | null
+  fileName: string
+  sensitive: boolean
+  remark: string
+}
+
+const pendingMerchantBindings = ref<PendingMerchantBinding[]>([])
+const pendingMerchantParams = ref<PendingMerchantParam[]>([])
+const pendingParamForm = reactive({
+  paramKey: '',
+  inputMode: 'TEXT' as 'TEXT' | 'FILE',
+  paramValue: '',
+  file: null as File | null,
+  fileName: '',
+  sensitive: false,
+  remark: '',
+})
+let pendingMerchantBindingId = 1
+let pendingMerchantParamId = 1
 
 const environmentOptions = ['PROD', 'UAT', 'SIT', 'TEST']
 const statusOptions = ['ACTIVE', 'INACTIVE']
@@ -262,6 +307,39 @@ function logRequestError(context: string, error: unknown) {
     url: maybeError.response?.config?.url,
     data: maybeError.response?.data,
   }, error)
+}
+
+async function copyMerchantParamValue(param: PaymentMerchantParam) {
+  if (!param.displayValue) {
+    ElMessage.warning('当前参数没有可复制的显示值')
+    return
+  }
+  try {
+    await copyTextToClipboard(param.displayValue)
+    ElMessage.success(`参数 ${param.paramKey} 已复制`)
+  } catch (error) {
+    ElMessage.error(`参数 ${param.paramKey} 复制失败`)
+    console.error(error)
+  }
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'readonly')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const succeeded = document.execCommand('copy')
+  document.body.removeChild(textarea)
+  if (!succeeded) {
+    throw new Error('execCommand copy failed')
+  }
 }
 
 function formatStatus(status: string | null | undefined) {
@@ -536,6 +614,8 @@ async function submitChannel() {
 
 function resetMerchantForm() {
   editingMerchantId.value = null
+  merchantDialogActiveTab.value = 'basic'
+  merchantDialogLockedChannelId.value = null
   const firstBusiness = bindingBusinessOptions.value[0]
   merchantForm.channelId = channelOptions.value[0]?.id || 0
   merchantForm.merchantCode = ''
@@ -552,10 +632,17 @@ function resetMerchantForm() {
   merchantBindingForm.defaultBinding = true
   merchantBindingForm.status = 'ACTIVE'
   merchantBindingForm.remark = ''
+  pendingMerchantBindings.value = []
+  pendingMerchantParams.value = []
+  resetPendingParamForm()
 }
 
-async function openMerchantDialog(id?: number) {
+async function openMerchantDialog(id?: number, lockedChannelId?: number) {
   resetMerchantForm()
+  if (lockedChannelId) {
+    merchantDialogLockedChannelId.value = lockedChannelId
+    merchantForm.channelId = lockedChannelId
+  }
   if (id) {
     const [detail, bindingPage] = await Promise.all([
       fetchPaymentMerchantDetail(id),
@@ -577,6 +664,10 @@ async function openMerchantDialog(id?: number) {
   merchantDialogVisible.value = true
 }
 
+function openMerchantDialogForChannel(channel: PaymentChannelSummary) {
+  openMerchantDialog(undefined, channel.id)
+}
+
 async function submitMerchant() {
   submitting.value = true
   try {
@@ -584,33 +675,24 @@ async function submitMerchant() {
       await updatePaymentMerchant(editingMerchantId.value, merchantForm)
       ElMessage.success('支付商户已更新')
     } else {
-      if (!merchantBindingForm.projectGroup) {
-        ElMessage.warning('请选择绑定业务')
-        return
-      }
-      normalizeMerchantBindingPurposeCodes()
       if (!merchantForm.purposeCodes?.length) {
+        merchantDialogActiveTab.value = 'basic'
         ElMessage.warning('请至少选择一个支持用途')
         return
       }
-      if (!merchantBindingForm.purposeCodes.length) {
-        ElMessage.warning('请选择绑定用途')
+      if (!pendingMerchantBindings.value.length) {
+        merchantDialogActiveTab.value = 'binding'
+        ElMessage.warning('请至少加入一条项目用途绑定')
+        return
+      }
+      if (hasPendingParamDraft()) {
+        merchantDialogActiveTab.value = 'params'
+        ElMessage.warning('请先将参数加入待新增列表，或清空当前参数草稿')
         return
       }
       const createdMerchant = await createPaymentMerchant(merchantForm)
-      await createPaymentBinding({
-        projectId: merchantBindingForm.projectId,
-        businessLineCode: merchantBindingForm.projectGroup,
-        businessLine: merchantBindingForm.projectGroup,
-        merchantId: createdMerchant.id,
-        purposeCode: merchantBindingForm.purposeCodes[0],
-        purposeCodes: [...merchantBindingForm.purposeCodes],
-        priority: merchantBindingForm.priority,
-        defaultBinding: merchantBindingForm.defaultBinding,
-        status: merchantBindingForm.status,
-        remark: merchantBindingForm.remark,
-        relations: [],
-      })
+      await savePendingMerchantBindings(createdMerchant.id)
+      await savePendingMerchantParams(createdMerchant.id)
       ElMessage.success('支付商户已新增')
     }
     merchantDialogVisible.value = false
@@ -637,6 +719,108 @@ function normalizeMerchantBindingPurposeCodes() {
 
 function handleMerchantPurposeChange() {
   normalizeMerchantBindingPurposeCodes()
+}
+
+function resetPendingMerchantBindingForm() {
+  editingPendingBindingId.value = null
+  const firstBusiness = bindingBusinessOptions.value[0]
+  merchantBindingForm.projectId = null
+  merchantBindingForm.projectGroup = firstBusiness?.group || ''
+  merchantBindingForm.purposeCodes = []
+  merchantBindingForm.priority = 1
+  merchantBindingForm.defaultBinding = true
+  merchantBindingForm.status = 'ACTIVE'
+  merchantBindingForm.remark = ''
+}
+
+function openPendingMerchantBindingDialog(binding?: PendingMerchantBinding) {
+  resetPendingMerchantBindingForm()
+  if (binding) {
+    editingPendingBindingId.value = binding.id
+    merchantBindingForm.projectId = binding.projectId
+    merchantBindingForm.projectGroup = binding.projectGroup
+    merchantBindingForm.purposeCodes = [...binding.purposeCodes]
+    merchantBindingForm.priority = binding.priority
+    merchantBindingForm.defaultBinding = binding.defaultBinding
+    merchantBindingForm.status = binding.status
+    merchantBindingForm.remark = binding.remark
+  }
+  pendingBindingDialogVisible.value = true
+}
+
+function addPendingMerchantBinding() {
+  if (!merchantBindingForm.projectGroup) {
+    ElMessage.warning('请选择绑定业务')
+    return
+  }
+  normalizeMerchantBindingPurposeCodes()
+  if (!merchantBindingForm.purposeCodes.length) {
+    ElMessage.warning('请选择绑定用途')
+    return
+  }
+  const duplicated = pendingMerchantBindings.value.some((binding) =>
+    binding.id !== editingPendingBindingId.value
+    && binding.projectGroup === merchantBindingForm.projectGroup
+    && binding.projectId === merchantBindingForm.projectId
+    && binding.purposeCodes.some((code) => merchantBindingForm.purposeCodes.includes(code)),
+  )
+  if (duplicated) {
+    ElMessage.warning('同一业务/项目下已存在相同用途的待新增绑定')
+    return
+  }
+  const nextBinding = {
+    id: editingPendingBindingId.value || pendingMerchantBindingId++,
+    projectId: merchantBindingForm.projectId,
+    projectGroup: merchantBindingForm.projectGroup,
+    purposeCodes: [...merchantBindingForm.purposeCodes],
+    priority: merchantBindingForm.priority,
+    defaultBinding: merchantBindingForm.defaultBinding,
+    status: merchantBindingForm.status,
+    remark: merchantBindingForm.remark,
+  }
+  if (editingPendingBindingId.value) {
+    pendingMerchantBindings.value = pendingMerchantBindings.value.map((binding) =>
+      binding.id === editingPendingBindingId.value ? nextBinding : binding,
+    )
+  } else {
+    pendingMerchantBindings.value.push(nextBinding)
+  }
+  pendingBindingDialogVisible.value = false
+  resetPendingMerchantBindingForm()
+}
+
+function removePendingMerchantBinding(id: number) {
+  pendingMerchantBindings.value = pendingMerchantBindings.value.filter((binding) => binding.id !== id)
+}
+
+function formatPendingBindingBusiness(binding: PendingMerchantBinding) {
+  return businessLines.value.find((business) => business.businessLineCode === binding.projectGroup)?.groupName || binding.projectGroup
+}
+
+function formatPendingBindingProject(binding: PendingMerchantBinding) {
+  if (!binding.projectId) {
+    return '业务线通用'
+  }
+  const project = projects.value.find((item) => item.id === binding.projectId)
+  return project ? `${project.code} / ${project.name}` : String(binding.projectId)
+}
+
+async function savePendingMerchantBindings(merchantId: number) {
+  for (const binding of pendingMerchantBindings.value) {
+    await createPaymentBinding({
+      projectId: binding.projectId,
+      businessLineCode: binding.projectGroup,
+      businessLine: binding.projectGroup,
+      merchantId,
+      purposeCode: binding.purposeCodes[0],
+      purposeCodes: [...binding.purposeCodes],
+      priority: binding.priority,
+      defaultBinding: binding.defaultBinding,
+      status: binding.status,
+      remark: binding.remark,
+      relations: [],
+    })
+  }
 }
 
 function resetBindingForm(lockedMerchantId?: number) {
@@ -809,6 +993,137 @@ function handleParamFileRemove() {
   paramUploadFiles.value = []
 }
 
+function resetPendingParamForm() {
+  editingPendingParamId.value = null
+  pendingParamForm.paramKey = ''
+  pendingParamForm.inputMode = 'TEXT'
+  pendingParamForm.paramValue = ''
+  pendingParamForm.file = null
+  pendingParamForm.fileName = ''
+  pendingParamForm.sensitive = false
+  pendingParamForm.remark = ''
+  pendingParamUploadFiles.value = []
+}
+
+function openPendingParamDialog(param?: PendingMerchantParam) {
+  resetPendingParamForm()
+  if (param) {
+    editingPendingParamId.value = param.id
+    pendingParamForm.paramKey = param.paramKey
+    pendingParamForm.inputMode = param.inputMode
+    pendingParamForm.paramValue = param.paramValue
+    pendingParamForm.file = param.file
+    pendingParamForm.fileName = param.fileName
+    pendingParamForm.sensitive = param.sensitive
+    pendingParamForm.remark = param.remark
+    pendingParamUploadFiles.value = param.fileName ? [{ name: param.fileName }] : []
+  }
+  pendingParamDialogVisible.value = true
+}
+
+function handlePendingParamFileChange(file: UploadFile) {
+  pendingParamForm.file = file.raw || null
+  pendingParamForm.fileName = file.name
+  pendingParamUploadFiles.value = [file]
+}
+
+function handlePendingParamFileRemove() {
+  pendingParamForm.file = null
+  pendingParamForm.fileName = ''
+  pendingParamUploadFiles.value = []
+}
+
+function handlePendingParamInputModeChange() {
+  pendingParamForm.paramValue = ''
+  pendingParamForm.file = null
+  pendingParamForm.fileName = ''
+  pendingParamForm.sensitive = false
+  pendingParamUploadFiles.value = []
+}
+
+function hasPendingParamDraft() {
+  return Boolean(
+    pendingParamForm.paramKey.trim()
+    || pendingParamForm.paramValue.trim()
+    || pendingParamForm.file
+    || pendingParamForm.remark.trim(),
+  )
+}
+
+function addPendingMerchantParam() {
+  if (!pendingParamForm.paramKey.trim()) {
+    ElMessage.warning('请输入参数名')
+    return
+  }
+  if (pendingMerchantParams.value.some((param) => param.id !== editingPendingParamId.value && param.paramKey === pendingParamForm.paramKey.trim())) {
+    ElMessage.warning('参数名已在待新增列表中')
+    return
+  }
+  if (pendingParamForm.inputMode === 'TEXT' && !pendingParamForm.paramValue.trim()) {
+    ElMessage.warning('请输入参数值')
+    return
+  }
+  if (pendingParamForm.inputMode === 'FILE' && !pendingParamForm.file) {
+    ElMessage.warning('请先选择参数文件')
+    return
+  }
+  const nextParam = {
+    id: editingPendingParamId.value || pendingMerchantParamId++,
+    paramKey: pendingParamForm.paramKey.trim(),
+    inputMode: pendingParamForm.inputMode,
+    paramValue: pendingParamForm.paramValue,
+    file: pendingParamForm.file,
+    fileName: pendingParamForm.fileName,
+    sensitive: pendingParamForm.inputMode === 'TEXT' && pendingParamForm.sensitive,
+    remark: pendingParamForm.remark,
+  }
+  if (editingPendingParamId.value) {
+    pendingMerchantParams.value = pendingMerchantParams.value.map((param) =>
+      param.id === editingPendingParamId.value ? nextParam : param,
+    )
+  } else {
+    pendingMerchantParams.value.push(nextParam)
+  }
+  pendingParamDialogVisible.value = false
+  resetPendingParamForm()
+}
+
+function removePendingMerchantParam(id: number) {
+  pendingMerchantParams.value = pendingMerchantParams.value.filter((param) => param.id !== id)
+}
+
+function formatPendingParamValue(param: PendingMerchantParam) {
+  if (param.inputMode === 'FILE') {
+    return param.fileName || '-'
+  }
+  if (param.sensitive) {
+    return '******'
+  }
+  return param.paramValue
+}
+
+async function savePendingMerchantParams(merchantId: number) {
+  for (const param of pendingMerchantParams.value) {
+    if (param.inputMode === 'FILE') {
+      await savePaymentMerchantParamFromFile(merchantId, {
+        paramKey: param.paramKey,
+        valueType: 'FILE',
+        fileValueType: 'BINARY',
+        file: param.file || undefined,
+        remark: param.remark || undefined,
+      })
+    } else {
+      await savePaymentMerchantParam(merchantId, {
+        paramKey: param.paramKey,
+        paramValue: param.paramValue,
+        valueType: 'TEXT',
+        sensitive: param.sensitive,
+        remark: param.remark || undefined,
+      })
+    }
+  }
+}
+
 async function submitParam() {
   if (!selectedMerchantId.value) {
     return
@@ -928,13 +1243,22 @@ async function loadPage() {
 }
 
 onMounted(loadPage)
+onDeactivated(() => {
+  restoreMerchantDialogOnActivate.value = merchantDialogVisible.value
+})
+onActivated(async () => {
+  if (!restoreMerchantDialogOnActivate.value) {
+    return
+  }
+  await nextTick()
+  merchantDialogVisible.value = true
+})
 </script>
 
 <template>
   <div class="page-card table-card">
     <div class="page-header">
       <div>
-        <h1 class="page-title">支付配置管理</h1>
         <p class="page-desc">统一管理支付渠道、商户账号、商户参数以及项目用途绑定。</p>
       </div>
     </div>
@@ -962,14 +1286,18 @@ onMounted(loadPage)
           <el-table-column prop="code" label="渠道编码" width="160" />
           <el-table-column prop="name" label="渠道名称" min-width="180" />
           <el-table-column prop="vendorName" label="厂商" width="160" />
+          <el-table-column prop="description" label="备注" min-width="200" show-overflow-tooltip />
           <el-table-column label="状态" width="120">
             <template #default="{ row }">
-              {{ formatStatus(row.status) }}
+              <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'danger'">
+                {{ formatStatus(row.status) }}
+              </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120">
+          <el-table-column label="操作" width="190">
             <template #default="{ row }">
               <el-button v-if="canUpdateChannel" link type="primary" @click="openChannelDialog(row.id)">编辑</el-button>
+              <el-button v-if="canCreateMerchant" link type="primary" @click="openMerchantDialogForChannel(row)">新增商户</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -1052,8 +1380,8 @@ onMounted(loadPage)
           </el-form>
 
           <el-table v-loading="loadingMerchants" :data="merchants" height="520">
-            <el-table-column prop="merchantCode" label="商户号" width="160" />
-            <el-table-column prop="merchantName" label="商户名称" min-width="180" />
+            <el-table-column prop="merchantCode" label="商户号" width="220" />
+            <el-table-column prop="merchantName" label="商户名称" min-width="260" />
             <el-table-column prop="channelName" label="渠道" width="140" />
             <el-table-column label="支持用途" min-width="180" show-overflow-tooltip>
               <template #default="{ row }">
@@ -1061,9 +1389,12 @@ onMounted(loadPage)
               </template>
             </el-table-column>
             <el-table-column prop="environment" label="环境" width="100" />
+            <el-table-column prop="remark" label="备注" min-width="200" show-overflow-tooltip />
             <el-table-column label="状态" width="100">
               <template #default="{ row }">
-                {{ formatStatus(row.status) }}
+                <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'danger'">
+                  {{ formatStatus(row.status) }}
+                </el-tag>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="160">
@@ -1109,7 +1440,7 @@ onMounted(loadPage)
     </template>
   </el-dialog>
 
-  <el-dialog v-model="merchantDetailDialogVisible" title="商户详情" width="980px">
+  <el-dialog v-model="merchantDetailDialogVisible" title="商户详情" width="min(1180px, 94vw)">
     <div class="detail-header">
       <div>
         <div class="detail-title">{{ selectedMerchantLabel }}</div>
@@ -1164,6 +1495,7 @@ onMounted(loadPage)
                 {{ formatRelationNames(row.relations) }}
               </template>
             </el-table-column>
+            <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
           </el-table>
 
           <div class="section-title">商户参数</div>
@@ -1176,9 +1508,19 @@ onMounted(loadPage)
                 {{ row.sourceType === 'FILE' ? row.fileName || '历史文件' : '-' }}
               </template>
             </el-table-column>
+            <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
             <el-table-column label="操作" width="90">
               <template #default="{ row }">
                 <el-button v-if="row.sourceType === 'FILE'" link type="primary" @click="downloadParamFile(row)">下载</el-button>
+                <el-button
+                  v-else
+                  :icon="DocumentCopy"
+                  link
+                  type="primary"
+                  @click="copyMerchantParamValue(row)"
+                >
+                  复制
+                </el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -1189,29 +1531,245 @@ onMounted(loadPage)
     </el-skeleton>
   </el-dialog>
 
-  <el-dialog v-model="merchantDialogVisible" :title="editingMerchantId ? '编辑支付商户' : '新增支付商户'" width="min(1080px, 94vw)">
+  <el-dialog
+    v-model="merchantDialogVisible"
+    :title="editingMerchantId ? '编辑支付商户' : '新增支付商户'"
+    class="merchant-config-dialog"
+    width="min(1080px, 94vw)"
+    :modal="false"
+    modal-penetrable
+    :lock-scroll="false"
+  >
+    <el-tabs v-model="merchantDialogActiveTab" class="merchant-dialog-tabs">
+      <el-tab-pane label="商户基础信息" name="basic">
+        <el-form label-width="110px">
+          <el-form-item label="所属渠道">
+            <el-select v-model="merchantForm.channelId" :disabled="Boolean(merchantDialogLockedChannelId)" style="width: 100%">
+              <el-option v-for="item in channelOptions" :key="item.id" :label="item.name" :value="item.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="商户号"><el-input v-model="merchantForm.merchantCode" /></el-form-item>
+          <el-form-item label="商户名称"><el-input v-model="merchantForm.merchantName" /></el-form-item>
+          <el-form-item label="环境">
+            <el-select v-model="merchantForm.environment" style="width: 100%">
+              <el-option v-for="environment in environmentOptions" :key="environment" :label="environment" :value="environment" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="editingMerchantId" label="状态">
+            <el-select v-model="merchantForm.status" style="width: 100%">
+              <el-option v-for="status in statusOptions" :key="status" :label="formatStatus(status)" :value="status" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="结算主体"><el-input v-model="merchantForm.settlementSubject" /></el-form-item>
+          <el-form-item label="支持用途">
+            <el-select v-model="merchantForm.purposeCodes" multiple filterable style="width: 100%" @change="handleMerchantPurposeChange">
+              <el-option v-for="purpose in purposes" :key="purpose.code" :label="formatPurposeOption(purpose)" :value="purpose.code">
+                <div class="purpose-option">
+                  <span class="purpose-option-name">{{ purpose.name }}</span>
+                  <span class="purpose-option-code">{{ purpose.code }}</span>
+                </div>
+              </el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item label="备注"><el-input v-model="merchantForm.remark" type="textarea" :rows="3" /></el-form-item>
+        </el-form>
+      </el-tab-pane>
+
+      <el-tab-pane label="项目用途绑定" name="binding">
+        <template v-if="!editingMerchantId">
+          <div class="tab-action-bar">
+            <el-button size="small" type="primary" plain @click="openPendingMerchantBindingDialog()">新增绑定</el-button>
+          </div>
+          <el-table :data="pendingMerchantBindings" size="small" empty-text="暂无待新增绑定">
+            <el-table-column label="业务" min-width="130" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ formatPendingBindingBusiness(row) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="项目" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ formatPendingBindingProject(row) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="用途" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ formatPurposeNames(row.purposeCodes, null) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="优先级" width="80" prop="priority" />
+            <el-table-column label="默认" width="70">
+              <template #default="{ row }">
+                {{ row.defaultBinding ? '是' : '否' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="80">
+              <template #default="{ row }">
+                {{ formatStatus(row.status) }}
+              </template>
+            </el-table-column>
+          <el-table-column label="操作" width="120">
+            <template #default="{ row }">
+                <el-button link type="primary" @click="openPendingMerchantBindingDialog(row)">编辑</el-button>
+                <el-button link type="danger" @click="removePendingMerchantBinding(row.id)">移除</el-button>
+            </template>
+          </el-table-column>
+          </el-table>
+        </template>
+        <template v-else>
+          <div class="tab-action-bar">
+            <el-button v-if="canManageBinding" size="small" type="primary" plain @click="openBindingDialogForSelectedMerchant()">新增绑定</el-button>
+          </div>
+          <el-table
+            v-loading="detailBindingsLoading"
+            :data="selectedMerchantBindings"
+            size="small"
+            empty-text="当前商户暂无项目用途绑定"
+          >
+            <el-table-column label="业务" width="130" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.projectGroup || row.businessLineName || row.businessLine || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="项目" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div class="binding-project-cell">
+                  <span class="binding-project-name">{{ formatBindingProjectName(row) }}</span>
+                  <span class="binding-project-code">{{ formatBindingProjectCode(row) }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="用途" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ formatPurposeNames(row.purposeCodes, row.purposeCode) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="默认" width="70">
+              <template #default="{ row }">
+                {{ row.defaultBinding ? '是' : '否' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="80">
+              <template #default="{ row }">
+                {{ formatStatus(row.status) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="80">
+              <template #default="{ row }">
+                <el-button v-if="canManageBinding" link type="primary" @click="openBindingDialogForSelectedMerchant(row)">编辑</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+      </el-tab-pane>
+
+      <el-tab-pane label="商户参数" name="params">
+        <template v-if="!editingMerchantId">
+          <div v-if="canManageParam" class="tab-action-bar">
+            <el-button size="small" type="primary" plain @click="openPendingParamDialog()">新增参数</el-button>
+          </div>
+          <el-empty v-else description="暂无商户参数维护权限" />
+          <el-table :data="pendingMerchantParams" size="small" empty-text="暂无待新增参数">
+            <el-table-column prop="paramKey" label="参数名" min-width="140" />
+            <el-table-column label="类型" width="90">
+              <template #default="{ row }">
+                {{ row.inputMode === 'FILE' ? 'FILE' : 'TEXT' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="显示值" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ formatPendingParamValue(row) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="敏感" width="70">
+              <template #default="{ row }">
+                {{ row.sensitive ? '是' : '否' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="remark" label="备注" min-width="160" show-overflow-tooltip />
+            <el-table-column label="操作" width="120">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openPendingParamDialog(row)">编辑</el-button>
+                <el-button link type="danger" @click="removePendingMerchantParam(row.id)">移除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+        <template v-else-if="selectedMerchantDetail">
+          <div class="tab-action-bar">
+            <el-button v-if="canManageParam" size="small" type="primary" plain @click="openParamDialog()">新增参数</el-button>
+          </div>
+          <el-table :data="selectedMerchantDetail.parameters" size="small" empty-text="当前商户暂无参数">
+            <el-table-column prop="paramKey" label="参数名" min-width="140" />
+            <el-table-column prop="valueType" label="类型" width="90" />
+            <el-table-column prop="displayValue" label="显示值" min-width="180" show-overflow-tooltip />
+            <el-table-column label="文件" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.sourceType === 'FILE' ? row.fileName || '历史文件' : '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="170">
+              <template #default="{ row }">
+                <el-button v-if="row.sourceType === 'FILE'" link type="primary" @click="downloadParamFile(row)">下载</el-button>
+                <el-button v-if="canManageParam" link type="primary" @click="openParamDialog(row)">编辑</el-button>
+                <el-button v-if="canManageParam" link type="danger" @click="deleteParam(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+      </el-tab-pane>
+    </el-tabs>
+    <template #footer>
+      <el-button @click="merchantDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="submitting" @click="submitMerchant">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog
+    v-model="pendingBindingDialogVisible"
+    :title="editingPendingBindingId ? '编辑待新增项目用途绑定' : '新增项目用途绑定'"
+    width="920px"
+    @closed="resetPendingMerchantBindingForm"
+  >
     <el-form label-width="110px">
-      <el-form-item label="所属渠道">
-        <el-select v-model="merchantForm.channelId" style="width: 100%">
-          <el-option v-for="item in channelOptions" :key="item.id" :label="item.name" :value="item.id" />
+      <el-form-item label="业务">
+        <el-select v-model="merchantBindingForm.projectGroup" filterable style="width: 100%" @change="handleMerchantBindingBusinessChange">
+          <el-option
+            v-for="business in bindingBusinessOptions"
+            :key="business.group"
+            :label="formatBusinessOption(business)"
+            :value="business.group"
+          >
+            <div class="business-option">
+              <span class="business-option-name">{{ business.name }}</span>
+              <span class="business-option-meta">{{ business.projectCount }} 个项目</span>
+            </div>
+          </el-option>
         </el-select>
       </el-form-item>
-      <el-form-item label="商户号"><el-input v-model="merchantForm.merchantCode" /></el-form-item>
-      <el-form-item label="商户名称"><el-input v-model="merchantForm.merchantName" /></el-form-item>
-      <el-form-item label="环境">
-        <el-select v-model="merchantForm.environment" style="width: 100%">
-          <el-option v-for="environment in environmentOptions" :key="environment" :label="environment" :value="environment" />
+      <el-form-item label="项目">
+        <el-select v-model="merchantBindingForm.projectId" clearable filterable placeholder="不选表示业务线通用绑定" style="width: 100%">
+          <el-option
+            v-for="project in merchantBindingProjects"
+            :key="project.id"
+            :label="formatProjectOption(project)"
+            :value="project.id"
+          >
+            <div class="project-option">
+              <span class="project-option-code">{{ project.code }}</span>
+              <span class="project-option-name">{{ project.name }}</span>
+            </div>
+          </el-option>
         </el-select>
       </el-form-item>
-      <el-form-item label="状态">
-        <el-select v-model="merchantForm.status" style="width: 100%">
-          <el-option v-for="status in statusOptions" :key="status" :label="formatStatus(status)" :value="status" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="结算主体"><el-input v-model="merchantForm.settlementSubject" /></el-form-item>
-      <el-form-item label="支持用途">
-        <el-select v-model="merchantForm.purposeCodes" multiple filterable style="width: 100%" @change="handleMerchantPurposeChange">
-          <el-option v-for="purpose in purposes" :key="purpose.code" :label="formatPurposeOption(purpose)" :value="purpose.code">
+      <el-form-item label="绑定用途">
+        <el-select
+          v-model="merchantBindingForm.purposeCodes"
+          multiple
+          filterable
+          :placeholder="merchantBindingPurposeOptions.length ? '选择当前商户支持的用途' : '请先选择支持用途'"
+          style="width: 100%"
+        >
+          <el-option v-for="purpose in merchantBindingPurposeOptions" :key="purpose.code" :label="formatPurposeOption(purpose)" :value="purpose.code">
             <div class="purpose-option">
               <span class="purpose-option-name">{{ purpose.name }}</span>
               <span class="purpose-option-code">{{ purpose.code }}</span>
@@ -1219,139 +1777,57 @@ onMounted(loadPage)
           </el-option>
         </el-select>
       </el-form-item>
-      <el-form-item label="备注"><el-input v-model="merchantForm.remark" type="textarea" :rows="3" /></el-form-item>
-      <template v-if="!editingMerchantId">
-        <div class="form-section-header">
-          <span>项目用途绑定</span>
-        </div>
-        <el-form-item label="业务">
-          <el-select v-model="merchantBindingForm.projectGroup" filterable style="width: 100%" @change="handleMerchantBindingBusinessChange">
-            <el-option
-              v-for="business in bindingBusinessOptions"
-              :key="business.group"
-              :label="formatBusinessOption(business)"
-              :value="business.group"
-            >
-              <div class="business-option">
-                <span class="business-option-name">{{ business.name }}</span>
-                <span class="business-option-meta">{{ business.projectCount }} 个项目</span>
-              </div>
-            </el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="项目">
-          <el-select v-model="merchantBindingForm.projectId" clearable filterable placeholder="不选表示业务线通用绑定" style="width: 100%">
-            <el-option
-              v-for="project in merchantBindingProjects"
-              :key="project.id"
-              :label="formatProjectOption(project)"
-              :value="project.id"
-            >
-              <div class="project-option">
-                <span class="project-option-code">{{ project.code }}</span>
-                <span class="project-option-name">{{ project.name }}</span>
-              </div>
-            </el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="绑定用途">
-          <el-select
-            v-model="merchantBindingForm.purposeCodes"
-            multiple
-            filterable
-            :placeholder="merchantBindingPurposeOptions.length ? '选择当前商户支持的用途' : '请先选择支持用途'"
-            style="width: 100%"
-          >
-            <el-option v-for="purpose in merchantBindingPurposeOptions" :key="purpose.code" :label="formatPurposeOption(purpose)" :value="purpose.code">
-              <div class="purpose-option">
-                <span class="purpose-option-name">{{ purpose.name }}</span>
-                <span class="purpose-option-code">{{ purpose.code }}</span>
-              </div>
-            </el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="优先级"><el-input-number v-model="merchantBindingForm.priority" :min="1" /></el-form-item>
-        <el-form-item label="默认绑定"><el-switch v-model="merchantBindingForm.defaultBinding" /></el-form-item>
-        <el-form-item label="绑定状态">
-          <el-select v-model="merchantBindingForm.status" style="width: 100%">
-            <el-option v-for="status in statusOptions" :key="status" :label="formatStatus(status)" :value="status" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="绑定备注"><el-input v-model="merchantBindingForm.remark" type="textarea" :rows="2" /></el-form-item>
-      </template>
-      <template v-if="editingMerchantId">
-        <div class="form-section-header">
-          <span>项目用途绑定</span>
-          <el-button v-if="canManageBinding" size="small" type="primary" plain @click="openBindingDialogForSelectedMerchant()">新增绑定</el-button>
-        </div>
-        <el-table
-          v-loading="detailBindingsLoading"
-          :data="selectedMerchantBindings"
-          size="small"
-          empty-text="当前商户暂无项目用途绑定"
-        >
-          <el-table-column label="业务" width="130" show-overflow-tooltip>
-            <template #default="{ row }">
-              {{ row.projectGroup || row.businessLineName || row.businessLine || '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="项目" min-width="180" show-overflow-tooltip>
-            <template #default="{ row }">
-              <div class="binding-project-cell">
-                <span class="binding-project-name">{{ formatBindingProjectName(row) }}</span>
-                <span class="binding-project-code">{{ formatBindingProjectCode(row) }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="用途" min-width="160" show-overflow-tooltip>
-            <template #default="{ row }">
-              {{ formatPurposeNames(row.purposeCodes, row.purposeCode) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="默认" width="70">
-            <template #default="{ row }">
-              {{ row.defaultBinding ? '是' : '否' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="80">
-            <template #default="{ row }">
-              {{ formatStatus(row.status) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="80">
-            <template #default="{ row }">
-              <el-button v-if="canManageBinding" link type="primary" @click="openBindingDialogForSelectedMerchant(row)">编辑</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </template>
-      <template v-if="editingMerchantId && selectedMerchantDetail">
-        <div class="form-section-header">
-          <span>已维护参数</span>
-          <el-button v-if="canManageParam" size="small" type="primary" plain @click="openParamDialog()">新增参数</el-button>
-        </div>
-        <el-table :data="selectedMerchantDetail.parameters" size="small" empty-text="当前商户暂无参数">
-          <el-table-column prop="paramKey" label="参数名" min-width="140" />
-          <el-table-column prop="valueType" label="类型" width="90" />
-          <el-table-column prop="displayValue" label="显示值" min-width="180" show-overflow-tooltip />
-          <el-table-column label="文件" min-width="150" show-overflow-tooltip>
-            <template #default="{ row }">
-              {{ row.sourceType === 'FILE' ? row.fileName || '历史文件' : '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="170">
-            <template #default="{ row }">
-              <el-button v-if="row.sourceType === 'FILE'" link type="primary" @click="downloadParamFile(row)">下载</el-button>
-              <el-button v-if="canManageParam" link type="primary" @click="openParamDialog(row)">编辑</el-button>
-              <el-button v-if="canManageParam" link type="danger" @click="deleteParam(row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </template>
+      <el-form-item label="优先级"><el-input-number v-model="merchantBindingForm.priority" :min="1" /></el-form-item>
+      <el-form-item label="默认绑定"><el-switch v-model="merchantBindingForm.defaultBinding" /></el-form-item>
+      <el-form-item label="绑定状态">
+        <el-select v-model="merchantBindingForm.status" style="width: 100%">
+          <el-option v-for="status in statusOptions" :key="status" :label="formatStatus(status)" :value="status" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="绑定备注"><el-input v-model="merchantBindingForm.remark" type="textarea" :rows="2" /></el-form-item>
     </el-form>
     <template #footer>
-      <el-button @click="merchantDialogVisible = false">取消</el-button>
-      <el-button type="primary" :loading="submitting" @click="submitMerchant">保存</el-button>
+      <el-button @click="pendingBindingDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="addPendingMerchantBinding">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog
+    v-model="pendingParamDialogVisible"
+    :title="editingPendingParamId ? '编辑待新增商户参数' : '新增商户参数'"
+    width="560px"
+    @closed="resetPendingParamForm"
+  >
+    <el-form label-width="100px">
+      <el-form-item label="参数名"><el-input v-model="pendingParamForm.paramKey" /></el-form-item>
+      <el-form-item label="类型">
+        <el-radio-group v-model="pendingParamForm.inputMode" @change="handlePendingParamInputModeChange">
+          <el-radio-button label="TEXT">TEXT</el-radio-button>
+          <el-radio-button label="FILE">文件</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item v-if="pendingParamForm.inputMode === 'TEXT'" label="参数值">
+        <el-input v-model="pendingParamForm.paramValue" type="textarea" :rows="4" />
+      </el-form-item>
+      <template v-else>
+        <el-form-item label="参数文件">
+          <el-upload
+            :auto-upload="false"
+            :file-list="pendingParamUploadFiles"
+            :limit="1"
+            :on-change="handlePendingParamFileChange"
+            :on-remove="handlePendingParamFileRemove"
+          >
+            <el-button>选择文件</el-button>
+          </el-upload>
+        </el-form-item>
+      </template>
+      <el-form-item v-if="pendingParamForm.inputMode === 'TEXT'" label="敏感参数"><el-switch v-model="pendingParamForm.sensitive" /></el-form-item>
+      <el-form-item label="备注"><el-input v-model="pendingParamForm.remark" /></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="pendingParamDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="addPendingMerchantParam">保存</el-button>
     </template>
   </el-dialog>
 
@@ -1565,6 +2041,61 @@ onMounted(loadPage)
   font-size: 14px;
   font-weight: 700;
   color: #0f172a;
+}
+
+:deep(.merchant-config-dialog) {
+  border: 2px solid rgba(37, 99, 235, 0.72);
+  background: #fff;
+  box-shadow:
+    0 34px 90px rgba(15, 23, 42, 0.42),
+    0 0 0 7px rgba(37, 99, 235, 0.13),
+    0 0 0 1px rgba(255, 255, 255, 0.9) inset;
+}
+
+:deep(.merchant-config-dialog::before) {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  left: -2px;
+  height: 6px;
+  border-radius: var(--el-dialog-border-radius) var(--el-dialog-border-radius) 0 0;
+  background: linear-gradient(90deg, #2563eb, #0f766e);
+  content: '';
+}
+
+:deep(.merchant-config-dialog .el-dialog__header) {
+  margin: calc(var(--el-dialog-padding-primary) * -1) calc(var(--el-dialog-padding-primary) * -1) 16px;
+  padding: 20px 52px 14px 18px;
+  border-bottom: 1px solid rgba(37, 99, 235, 0.2);
+  border-radius: var(--el-dialog-border-radius) var(--el-dialog-border-radius) 0 0;
+  background: linear-gradient(180deg, #eff6ff, #f8fafc);
+}
+
+:deep(.merchant-config-dialog .el-dialog__title) {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+:deep(.merchant-config-dialog .el-dialog__body) {
+  max-height: min(68vh, 720px);
+  overflow: auto;
+}
+
+:deep(.merchant-config-dialog .el-dialog__footer) {
+  margin: 18px calc(var(--el-dialog-padding-primary) * -1) calc(var(--el-dialog-padding-primary) * -1);
+  padding: 14px 16px 16px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  background: #fff;
+}
+
+.merchant-dialog-tabs {
+  min-height: 430px;
+}
+
+.tab-action-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .pagination-bar {

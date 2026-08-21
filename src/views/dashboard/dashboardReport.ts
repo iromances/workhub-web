@@ -7,6 +7,16 @@ export interface ReportDemandStatusTheme {
 }
 
 const REPORT_WIDTH = 1280
+const REPORT_SCALE = 2
+const MAX_CANVAS_AREA = 16_000_000
+const RELEASED_ROW_HEIGHT = 68
+const RELEASED_ROW_STEP = 78
+const PENDING_ROW_HEIGHT = 94
+const PENDING_ROW_STEP = 104
+const EMPTY_ROW_HEIGHT = 74
+const TAG_GAP = 8
+const TAG_MIN_WIDTH = 66
+const TAG_MAX_WIDTH = 160
 
 const statusThemes: Record<string, ReportDemandStatusTheme> = {
   已收录: { color: '#35566d', background: '#eaf4fb', border: '#bfd8eb' },
@@ -28,6 +38,12 @@ const defaultStatusTheme: ReportDemandStatusTheme = {
   border: '#d7dee6',
 }
 
+const requirementTypeThemes: Record<string, ReportDemandStatusTheme> = {
+  研发需求: { color: '#1d4ed8', background: '#eff6ff', border: '#bfdbfe' },
+  '数据提取/运维': { color: '#7e22ce', background: '#faf5ff', border: '#e9d5ff' },
+  数据运维需求: { color: '#7e22ce', background: '#faf5ff', border: '#e9d5ff' },
+}
+
 export function resolveReportDemandStatusTheme(status: string | null | undefined): ReportDemandStatusTheme {
   return statusThemes[status || ''] || defaultStatusTheme
 }
@@ -39,7 +55,7 @@ export function buildProjectProgressReportFileName(date: Date): string {
   const hh = pad2(date.getHours())
   const mi = pad2(date.getMinutes())
   const ss = pad2(date.getSeconds())
-  return `项目总体进度报告_${yyyy}${mm}${dd}_${hh}${mi}${ss}.png`
+  return `项目进度_${yyyy}${mm}${dd}_${hh}${mi}${ss}.png`
 }
 
 export async function downloadProjectProgressReportScreenshot(report: ProjectProgressReport, fileName: string): Promise<void> {
@@ -60,13 +76,15 @@ export async function downloadProjectProgressReportScreenshot(report: ProjectPro
 
 function renderProjectProgressReportCanvas(report: ProjectProgressReport): HTMLCanvasElement {
   const height = calculateReportHeight(report)
+  const scale = resolveReportScale(height)
   const canvas = document.createElement('canvas')
-  canvas.width = REPORT_WIDTH
-  canvas.height = height
+  canvas.width = Math.ceil(REPORT_WIDTH * scale)
+  canvas.height = Math.ceil(height * scale)
   const context = canvas.getContext('2d')
   if (!context) {
     throw new Error('当前浏览器不支持生成截图')
   }
+  context.scale(scale, scale)
 
   const panelX = 40
   const panelY = 40
@@ -91,7 +109,7 @@ function renderProjectProgressReportCanvas(report: ProjectProgressReport): HTMLC
   context.restore()
 
   drawText(context, report.title, contentX, 72, 34, 900, '#ffffff')
-  drawText(context, `生成时间：${report.generatedAt} · ${report.statusNote}`, contentX, 120, 15, 500, '#ccfbf1')
+  drawText(context, `生成时间：${report.generatedAt}`, contentX, 120, 15, 500, '#ccfbf1')
   cursorY = 184
 
   drawSummaryCards(context, report.summary, contentX, cursorY, contentWidth)
@@ -100,7 +118,7 @@ function renderProjectProgressReportCanvas(report: ProjectProgressReport): HTMLC
   drawSectionTitle(context, '本周上线需求', `按实际上线日期统计，共 ${report.weeklyReleasedDemands.length} 条`, contentX, cursorY, contentWidth)
   cursorY += 48
   drawWeeklyReleasedDemands(context, report.weeklyReleasedDemands, contentX, cursorY, contentWidth)
-  cursorY += Math.max(report.weeklyReleasedDemands.length, 1) * 78 + 32
+  cursorY += Math.max(report.weeklyReleasedDemands.length, 1) * RELEASED_ROW_STEP + 32
 
   drawSectionTitle(context, '未上线需求', `展示全部未上线需求，共 ${report.pendingReleaseDemands.length} 条`, contentX, cursorY, contentWidth)
   cursorY += 48
@@ -109,10 +127,18 @@ function renderProjectProgressReportCanvas(report: ProjectProgressReport): HTMLC
   return canvas
 }
 
+function resolveReportScale(height: number): number {
+  const logicalArea = REPORT_WIDTH * height
+  if (logicalArea > MAX_CANVAS_AREA) {
+    throw new Error('报告内容过多，无法生成单张截图')
+  }
+  return Math.min(REPORT_SCALE, Math.sqrt(MAX_CANVAS_AREA / logicalArea))
+}
+
 function calculateReportHeight(report: ProjectProgressReport): number {
   const releasedRows = Math.max(report.weeklyReleasedDemands.length, 1)
   const demandRows = Math.max(report.pendingReleaseDemands.length, 1)
-  return 40 + 112 + 32 + 180 + 48 + releasedRows * 78 + 32 + 48 + demandRows * 78 + 58
+  return 40 + 112 + 32 + 180 + 48 + releasedRows * RELEASED_ROW_STEP + 32 + 48 + demandRows * PENDING_ROW_STEP + 58
 }
 
 function drawSummaryCards(context: CanvasRenderingContext2D, summary: ProjectProgressReportSummary[], x: number, y: number, width: number) {
@@ -135,44 +161,81 @@ function drawSectionTitle(context: CanvasRenderingContext2D, title: string, note
 
 function drawPendingReleaseDemands(context: CanvasRenderingContext2D, demands: ProjectProgressReportDemand[], x: number, y: number, width: number) {
   if (!demands.length) {
-    drawRoundedRect(context, x, y, width, 74, 14, '#ffffff', '#cbd5e1')
+    drawRoundedRect(context, x, y, width, EMPTY_ROW_HEIGHT, 14, '#ffffff', '#cbd5e1')
     drawText(context, '当前没有未上线需求', x + width / 2 - 63, y + 28, 14, 600, '#94a3b8')
     return
   }
   let cursorY = y
   demands.forEach((demand) => {
     const theme = resolveReportDemandStatusTheme(demand.demandStatus)
-    const statusWidth = Math.max(context.measureText(demand.demandStatus).width + 24, 66)
-    drawRoundedRect(context, x, cursorY, width, 68, 14, '#ffffff', '#e2e8f0')
+    const statusWidth = measureTagWidth(context, demand.demandStatus)
+    const statusX = x + width - statusWidth - 16
+    drawRoundedRect(context, x, cursorY, width, PENDING_ROW_HEIGHT, 14, '#ffffff', '#e2e8f0')
     drawCircle(context, x + 22, cursorY + 22, 6, theme.color)
+    setFont(context, 15, 900)
     drawText(context, ellipsizeText(context, demand.title, width - statusWidth - 92), x + 38, cursorY + 13, 15, 900, '#0f172a')
-    drawRoundedRect(context, x + width - statusWidth - 16, cursorY + 11, statusWidth, 26, 13, theme.background, theme.border)
-    drawText(context, demand.demandStatus, x + width - statusWidth - 4, cursorY + 17, 12, 800, theme.color)
+    drawTag(context, demand.demandStatus, statusX, cursorY + 11, statusWidth, theme)
     const meta = `审批编号：${demand.approvalCode} · 提出人：${demand.proposerName} · 业务线：${demand.businessLine} · ${demand.receivedAt}`
+    setFont(context, 12, 500)
     drawText(context, ellipsizeText(context, meta, width - 38), x + 38, cursorY + 43, 12, 500, '#64748b')
-    cursorY += 78
+    const dateItems = demand.dateItems || []
+    const dateMeta = dateItems.length
+      ? dateItems.map(item => `${item.label}：${item.value}`).join(' · ')
+      : '日期：-'
+    setFont(context, 12, 600)
+    drawText(context, ellipsizeText(context, dateMeta, width - 38), x + 38, cursorY + 66, 12, 600, '#475569')
+    cursorY += PENDING_ROW_STEP
   })
 }
 
 function drawWeeklyReleasedDemands(context: CanvasRenderingContext2D, demands: ProjectProgressReportReleasedDemand[], x: number, y: number, width: number) {
   if (!demands.length) {
-    drawRoundedRect(context, x, y, width, 74, 14, '#ffffff', '#cbd5e1')
+    drawRoundedRect(context, x, y, width, EMPTY_ROW_HEIGHT, 14, '#ffffff', '#cbd5e1')
     drawText(context, '本周没有已上线需求', x + width / 2 - 63, y + 28, 14, 600, '#94a3b8')
     return
   }
   let cursorY = y
   demands.forEach((demand) => {
-    const theme = resolveReportDemandStatusTheme(demand.demandStatus)
-    const statusWidth = Math.max(context.measureText(demand.demandStatus).width + 24, 66)
-    drawRoundedRect(context, x, cursorY, width, 68, 14, '#ffffff', '#e2e8f0')
+    const statusTheme = resolveReportDemandStatusTheme(demand.demandStatus)
+    const requirementType = demand.requirementType || '-'
+    const requirementTypeTheme = requirementTypeThemes[requirementType] || defaultStatusTheme
+    const statusWidth = measureTagWidth(context, demand.demandStatus)
+    const requirementTypeWidth = measureTagWidth(context, requirementType)
+    const statusX = x + width - statusWidth - 16
+    const titleX = x + 38
+    const titleMaxWidth = statusX - titleX - requirementTypeWidth - TAG_GAP * 2
+    drawRoundedRect(context, x, cursorY, width, RELEASED_ROW_HEIGHT, 14, '#ffffff', '#e2e8f0')
     drawCircle(context, x + 22, cursorY + 22, 6, '#16a34a')
-    drawText(context, ellipsizeText(context, demand.title, width - statusWidth - 92), x + 38, cursorY + 13, 15, 900, '#0f172a')
-    drawRoundedRect(context, x + width - statusWidth - 16, cursorY + 11, statusWidth, 26, 13, theme.background, theme.border)
-    drawText(context, demand.demandStatus, x + width - statusWidth - 4, cursorY + 17, 12, 800, theme.color)
+    setFont(context, 15, 900)
+    const title = ellipsizeText(context, demand.title, titleMaxWidth)
+    const requirementTypeX = titleX + context.measureText(title).width + TAG_GAP
+    drawText(context, title, titleX, cursorY + 13, 15, 900, '#0f172a')
+    drawTag(context, requirementType, requirementTypeX, cursorY + 11, requirementTypeWidth, requirementTypeTheme)
+    drawTag(context, demand.demandStatus, statusX, cursorY + 11, statusWidth, statusTheme)
     const meta = `审批编号：${demand.approvalCode} · 提出人：${demand.proposerName} · 业务线：${demand.businessLine} · 上线日期：${demand.releasedTime}`
+    setFont(context, 12, 500)
     drawText(context, ellipsizeText(context, meta, width - 38), x + 38, cursorY + 43, 12, 500, '#64748b')
-    cursorY += 78
+    cursorY += RELEASED_ROW_STEP
   })
+}
+
+function measureTagWidth(context: CanvasRenderingContext2D, text: string | null | undefined): number {
+  setFont(context, 12, 800)
+  const contentWidth = context.measureText(text || '-').width + 24
+  return Math.min(Math.max(contentWidth, TAG_MIN_WIDTH), TAG_MAX_WIDTH)
+}
+
+function drawTag(
+  context: CanvasRenderingContext2D,
+  text: string | null | undefined,
+  x: number,
+  y: number,
+  width: number,
+  theme: ReportDemandStatusTheme,
+) {
+  drawRoundedRect(context, x, y, width, 26, 13, theme.background, theme.border)
+  setFont(context, 12, 800)
+  drawText(context, ellipsizeText(context, text || '-', width - 24), x + 12, y + 6, 12, 800, theme.color)
 }
 
 function drawText(context: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, weight: number, color: string) {

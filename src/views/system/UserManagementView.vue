@@ -15,6 +15,8 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import type { SysRole, SysUser, SysUserSaveRequest } from '@/types/system'
 
+const PINYIN_USER_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9._-]*$/
+
 const authStore = useAuthStore()
 const loading = ref(false)
 const submitting = ref(false)
@@ -101,7 +103,11 @@ function openEdit(row: SysUser) {
 
 async function submitUser() {
   if (!form.userName?.trim() || !form.displayName?.trim()) {
-    ElMessage.warning('请填写用户名和展示名')
+    ElMessage.warning('请填写用户名和昵称')
+    return
+  }
+  if (!editingUser.value && !PINYIN_USER_NAME_PATTERN.test(form.userName.trim())) {
+    ElMessage.warning('用户名必须使用拼音或英文账号格式')
     return
   }
   submitting.value = true
@@ -201,15 +207,12 @@ onMounted(async () => {
 <template>
   <div class="page-card table-card">
     <div class="page-header">
-      <div>
-        <h1 class="page-title">账号管理</h1>
-      </div>
       <el-button v-if="canCreate" type="primary" @click="openCreate">新增账号</el-button>
     </div>
 
     <el-form inline class="filter-form" @submit.prevent="loadUsers">
       <el-form-item label="关键字">
-        <el-input v-model="filters.keyword" clearable placeholder="用户名 / 展示名" @keyup.enter="loadUsers" />
+        <el-input v-model="filters.keyword" clearable placeholder="用户名 / 昵称" @keyup.enter="loadUsers" />
       </el-form-item>
       <el-form-item label="状态">
         <el-select v-model="filters.status" clearable style="width: 140px">
@@ -224,7 +227,7 @@ onMounted(async () => {
 
     <el-table v-loading="loading" :data="users">
       <el-table-column prop="userName" label="用户名" width="140" />
-      <el-table-column prop="displayName" label="展示名" width="150" />
+      <el-table-column prop="displayName" label="昵称" width="150" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '启用' : '停用' }}</el-tag>
@@ -254,9 +257,13 @@ onMounted(async () => {
   <el-dialog v-model="userDialogVisible" title="账号" width="560px">
     <el-form label-position="top">
       <el-form-item label="用户名">
-        <el-input v-model="form.userName" :disabled="Boolean(editingUser)" />
+        <el-input
+          v-model="form.userName"
+          :disabled="Boolean(editingUser)"
+          placeholder="例如 zhangsan"
+        />
       </el-form-item>
-      <el-form-item label="展示名">
+      <el-form-item label="昵称">
         <el-input v-model="form.displayName" />
       </el-form-item>
       <el-form-item label="邮箱">
