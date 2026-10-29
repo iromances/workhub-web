@@ -1,3 +1,5 @@
+import type { IntakeProcessInfo } from './intakeProcessInfo'
+
 export interface ProjectSummary {
   id: number
   businessLineCode: string
@@ -425,6 +427,7 @@ export interface IntakeAIDraft {
 }
 
 export interface IntakeDetail {
+  processInfo?: IntakeProcessInfo | null
   id: number
   sourceType: string
   sourceChannel: string

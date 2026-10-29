@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ElMessage, type FormInstance } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 
 import {
   createAiProvider,
@@ -9,6 +9,7 @@ import {
   fetchAiUseCaseDetail,
   fetchAiUseCases,
   fetchDictOptions,
+  fetchCodexModels,
   testAiProviderConnection,
   updateAiProvider,
   updateAiUseCase,
@@ -21,6 +22,9 @@ import type {
   AiUseCaseConfig,
   AiUseCaseConfigRequest,
 } from '@/types/ai-config'
+
+import { createCodexCatalogLoader, matchingEffort, reasoningAfterModelChange, validateCliSelection,
+  type CodexCatalogState } from './codexModelForm'
 
 interface OptionItem {
   code: string
@@ -112,6 +116,50 @@ const providerForm = reactive({
   cli: createChannelForm('CLI'),
   remark: '',
 })
+
+const cliCatalog = reactive<CodexCatalogState>({ catalog: null, loading: false, error: '' })
+const cliCatalogLoader = createCodexCatalogLoader(cliCatalog, fetchCodexModels,
+  error => errorMessage(error, '加载 Codex 模型失败，请重试'))
+let originalCli: ChannelForm | null = null
+const cliModels = computed(() => cliCatalog.catalog?.models ?? [])
+const selectedCliModel = computed(() => cliModels.value.find(item => item.model === providerForm.cli.defaultModel))
+const cliEfforts = computed(() => selectedCliModel.value?.supportedReasoningEfforts ?? [])
+const cliModelMissing = computed(() => !!providerForm.cli.defaultModel && !selectedCliModel.value)
+const cliEffortMissing = computed(() => !!providerForm.cli.defaultReasoningLevel
+  && !matchingEffort(selectedCliModel.value, providerForm.cli.defaultReasoningLevel))
+const cliReasoningValue = computed({
+  get: () => matchingEffort(selectedCliModel.value, providerForm.cli.defaultReasoningLevel) ?? providerForm.cli.defaultReasoningLevel,
+  set: (value: string) => { providerForm.cli.defaultReasoningLevel = value },
+})
+
+function invalidateCliCatalog() {
+  cliCatalogLoader.invalidate()
+}
+
+function loadCliCatalog(forceRefresh = false) {
+  if (!providerDialogVisible.value || !providerForm.cli.enabled) return
+  void cliCatalogLoader.load({
+    cliCommand: providerForm.cli.cliCommand,
+    cliWorkingDirectory: providerForm.cli.cliWorkingDirectory,
+    forceRefresh,
+  })
+}
+
+function cliEnabledChanged() {
+  invalidateCliCatalog()
+  loadCliCatalog()
+}
+
+function cliModelChanged() {
+  if (selectedCliModel.value) {
+    providerForm.cli.defaultReasoningLevel = reasoningAfterModelChange(
+      selectedCliModel.value, providerForm.cli.defaultReasoningLevel)
+  }
+}
+
+watch(providerDialogVisible, visible => {
+  if (!visible) invalidateCliCatalog()
+}, { flush: 'sync' })
 
 const useCaseForm = reactive({
   id: null as number | null,
@@ -305,6 +353,7 @@ function resetUseCaseQuery() {
 }
 
 function openProviderDialog(group?: AiProviderGroup) {
+  invalidateCliCatalog()
   providerForm.editing = false
   providerForm.groupName = ''
   providerForm.vendor = ''
@@ -324,7 +373,9 @@ function openProviderDialog(group?: AiProviderGroup) {
     providerForm.remark = group.api?.remark || group.cli?.remark || ''
   }
   providerChannelTab.value = providerForm.api.enabled || !providerForm.cli.enabled ? 'API' : 'CLI'
+  originalCli = { ...providerForm.cli }
   providerDialogVisible.value = true
+  loadCliCatalog()
 }
 
 function channelFormFromRow(channelType: 'API' | 'CLI', row?: AiProviderConfig): ChannelForm {
@@ -376,6 +427,12 @@ async function saveProviderForm() {
   }
   if (providerForm.cli.enabled && !providerForm.cli.cliCommand) {
     ElMessage.warning('请填写 CLI 命令')
+    providerChannelTab.value = 'CLI'
+    return
+  }
+  const cliValidation = validateCliSelection(providerForm.cli, originalCli, cliCatalog.catalog)
+  if (cliValidation) {
+    ElMessage.warning(cliValidation)
     providerChannelTab.value = 'CLI'
     return
   }
@@ -986,26 +1043,45 @@ onMounted(async () => {
               <div class="main-text">CLI 通道</div>
               <div class="sub-text">CLI 命令、工作目录和超时配置</div>
             </div>
-            <el-switch v-model="providerForm.cli.enabled" />
+            <el-switch v-model="providerForm.cli.enabled" @change="cliEnabledChanged" />
           </div>
           <div v-if="providerForm.cli.enabled" class="channel-body">
+            <div class="channel-head">
+              <span class="sub-text" v-if="cliCatalog.loading">正在读取 Codex 模型列表…</span>
+              <span class="sub-text" v-else-if="cliCatalog.catalog">
+                {{ cliCatalog.catalog.cached ? '使用最近查询结果' : '模型列表已更新' }} ·
+                {{ new Date(cliCatalog.catalog.fetchedAt).toLocaleTimeString() }}
+              </span>
+              <span class="sub-text" v-else>模型与推理强度来自运行服务的 Codex 环境</span>
+              <el-button :loading="cliCatalog.loading" @click="loadCliCatalog(true)">{{ cliCatalog.error ? '重试' : '刷新模型' }}</el-button>
+            </div>
+            <el-alert v-if="cliCatalog.error" :title="cliCatalog.error" type="error" :closable="false" show-icon />
+            <el-alert v-else-if="cliCatalog.catalog && (cliModelMissing || cliEffortMissing)"
+              title="原配置的模型或推理强度当前不可选，已保留原值，请核对后选择。" type="warning" :closable="false" show-icon />
             <div class="form-grid two-grid">
               <el-form-item label="CLI命令">
-                <el-input v-model="providerForm.cli.cliCommand" placeholder="例如 codex" />
+                <el-input v-model="providerForm.cli.cliCommand" placeholder="例如 codex" @input="invalidateCliCatalog" @change="loadCliCatalog()" />
               </el-form-item>
               <el-form-item label="CLI工作目录">
-                <el-input v-model="providerForm.cli.cliWorkingDirectory" />
+                <el-input v-model="providerForm.cli.cliWorkingDirectory" @input="invalidateCliCatalog" @change="loadCliCatalog()" />
               </el-form-item>
             </div>
             <div class="form-grid three-grid">
               <el-form-item label="默认模型">
-                <el-select v-model="providerForm.cli.defaultModel" filterable style="width: 100%">
-                  <el-option v-for="item in modelOptions" :key="item.code" :label="item.label" :value="item.code" />
+                <el-select v-model="providerForm.cli.defaultModel" filterable style="width: 100%"
+                  :loading="cliCatalog.loading" :disabled="!cliCatalog.catalog || cliCatalog.loading" @change="cliModelChanged">
+                  <el-option v-if="cliModelMissing" :value="providerForm.cli.defaultModel"
+                    :label="providerForm.cli.defaultModel + (cliCatalog.catalog ? '（当前不可选）' : '（原配置）')" disabled />
+                  <el-option v-for="item in cliModels" :key="item.model" :label="item.displayName" :value="item.model" />
                 </el-select>
               </el-form-item>
               <el-form-item label="默认推理强度">
-                <el-select v-model="providerForm.cli.defaultReasoningLevel" filterable style="width: 100%">
-                  <el-option v-for="item in reasoningOptions" :key="item.code" :label="item.label" :value="item.code" />
+                <el-select v-model="cliReasoningValue" filterable style="width: 100%"
+                  :disabled="!selectedCliModel || cliCatalog.loading">
+                  <el-option v-if="cliEffortMissing" :value="providerForm.cli.defaultReasoningLevel"
+                    :label="providerForm.cli.defaultReasoningLevel + (cliCatalog.catalog ? '（当前不可选）' : '（原配置）')" disabled />
+                  <el-option v-for="item in cliEfforts" :key="item.reasoningEffort"
+                    :label="item.reasoningEffort" :value="item.reasoningEffort" :title="item.description" />
                 </el-select>
               </el-form-item>
               <el-form-item label="默认速度">

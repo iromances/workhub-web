@@ -5,9 +5,16 @@ import type {
   OpsMonitorSaveRequest,
   OpsMonitorType,
   SystemAlertDashboard,
+  SystemAlertCleanupTask,
+  SystemAlertDeleteByEventRequest,
+  SystemAlertDeleteByMessageRequest,
+  SystemAlertDeleteAndFilterRequest,
+  SystemAlertEventBatchDeleteResponse,
   SystemAlertEventCategory,
   SystemAlertRule,
   SystemAlertRuleSaveRequest,
+  SystemAlertScope,
+  SystemAlertScopeSaveRequest,
   SystemAlertSubsystem,
   SystemAlertSubsystemSaveRequest,
   XxlJobDashboard,
@@ -103,12 +110,65 @@ export async function fetchSystemAlertDashboard(params?: {
   serviceName?: string
   level?: string
   eventCategory?: SystemAlertEventCategory
+  messageKeyword?: string
   startTime?: string
   endTime?: string
   page?: number
   pageSize?: number
 }): Promise<SystemAlertDashboard> {
   const response = await http.get<ApiResponse<SystemAlertDashboard>>('/ops/system-alerts', { params })
+  return response.data.data
+}
+
+export async function deleteSystemAlertEvents(ids: number[]): Promise<SystemAlertEventBatchDeleteResponse> {
+  const response = await http.post<ApiResponse<SystemAlertEventBatchDeleteResponse>>(
+    '/ops/system-alerts/events/batch-delete',
+    { ids },
+  )
+  return response.data.data
+}
+
+export async function createSystemAlertDeleteAndFilterTask(
+  request: SystemAlertDeleteAndFilterRequest,
+): Promise<SystemAlertCleanupTask> {
+  const response = await http.post<ApiResponse<SystemAlertCleanupTask>>(
+    '/ops/system-alerts/events/delete-and-filter-tasks',
+    request,
+  )
+  return response.data.data
+}
+
+export async function createSystemAlertDeleteTask(
+  request: SystemAlertDeleteByMessageRequest,
+): Promise<SystemAlertCleanupTask> {
+  const response = await http.post<ApiResponse<SystemAlertCleanupTask>>(
+    '/ops/system-alerts/events/delete-tasks',
+    request,
+  )
+  return response.data.data
+}
+
+export async function createSystemAlertExactMessageDeleteTask(
+  request: SystemAlertDeleteByEventRequest,
+): Promise<SystemAlertCleanupTask> {
+  const response = await http.post<ApiResponse<SystemAlertCleanupTask>>(
+    '/ops/system-alerts/events/exact-message-delete-tasks',
+    request,
+  )
+  return response.data.data
+}
+
+export async function fetchSystemAlertCleanupTask(id: number): Promise<SystemAlertCleanupTask> {
+  const response = await http.get<ApiResponse<SystemAlertCleanupTask>>(
+    `/ops/system-alerts/events/cleanup-tasks/${id}`,
+  )
+  return response.data.data
+}
+
+export async function fetchSystemAlertDeleteAndFilterTask(id: number): Promise<SystemAlertCleanupTask> {
+  const response = await http.get<ApiResponse<SystemAlertCleanupTask>>(
+    `/ops/system-alerts/events/delete-and-filter-tasks/${id}`,
+  )
   return response.data.data
 }
 
@@ -134,6 +194,29 @@ export async function updateSystemAlertSubsystem(id: number, request: SystemAler
 
 export async function deleteSystemAlertSubsystem(id: number): Promise<void> {
   await http.delete<ApiResponse<void>>(`/ops/system-alerts/subsystems/${id}`)
+}
+
+export async function fetchSystemAlertScopes(params?: {
+  businessLineCode?: string
+  environmentCode?: string
+  enabledOnly?: boolean
+}): Promise<SystemAlertScope[]> {
+  const response = await http.get<ApiResponse<PageResponse<SystemAlertScope>>>('/ops/system-alerts/scopes', { params })
+  return response.data.data.items
+}
+
+export async function createSystemAlertScope(request: SystemAlertScopeSaveRequest): Promise<SystemAlertScope> {
+  const response = await http.post<ApiResponse<SystemAlertScope>>('/ops/system-alerts/scopes', request)
+  return response.data.data
+}
+
+export async function updateSystemAlertScope(id: number, request: SystemAlertScopeSaveRequest): Promise<SystemAlertScope> {
+  const response = await http.put<ApiResponse<SystemAlertScope>>(`/ops/system-alerts/scopes/${id}`, request)
+  return response.data.data
+}
+
+export async function deleteSystemAlertScope(id: number): Promise<void> {
+  await http.delete<ApiResponse<void>>(`/ops/system-alerts/scopes/${id}`)
 }
 
 export async function fetchSystemAlertRules(params?: {

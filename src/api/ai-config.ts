@@ -9,6 +9,8 @@ import type {
   AiUseCaseQuery,
   AiUseCaseManagePage,
   DictOption,
+  CodexModelCatalog,
+  CodexModelCatalogRequest,
 } from '@/types/ai-config'
 
 import http from './http'
@@ -75,5 +77,10 @@ export async function updateAiUseCase(id: number, request: AiUseCaseConfigReques
 
 export async function fetchDictOptions(dictType: string): Promise<DictOption[]> {
   const response = await http.post<ApiResponse<DictOption[]>>('/dict/list', { dictType })
+  return response.data.data
+}
+
+export async function fetchCodexModels(request: CodexModelCatalogRequest): Promise<CodexModelCatalog> {
+  const response = await http.post<ApiResponse<CodexModelCatalog>>('/manage/system/ai-provider/codex-models', request)
   return response.data.data
 }

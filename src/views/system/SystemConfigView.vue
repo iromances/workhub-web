@@ -130,7 +130,7 @@ onMounted(loadConfigs)
       type="info"
       show-icon
       :closable="false"
-      title="ELK 配置约定：configGroup 使用 elk.alert；先配置 baseUrl、authType 和认证信息，最后设置 enabled=true。日志索引模式在“系统预警 → 关注子系统”中维护；password、apiKey 的 valueType 必须选择 SECRET。"
+      title="ELK 配置约定：configGroup 使用 elk.alert；先配置 baseUrl、authType 和认证信息，最后设置 enabled=true。日志索引模式在“系统预警 → 关注业务线”中维护；password、apiKey 的 valueType 必须选择 SECRET。"
     />
 
     <el-form inline class="filter-form" @submit.prevent="loadConfigs">

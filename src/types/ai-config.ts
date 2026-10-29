@@ -157,3 +157,23 @@ export interface AiProviderGroup {
   cli?: AiProviderConfig
   enabledCount: number
 }
+
+export interface CodexModelCatalogRequest {
+  cliCommand: string
+  cliWorkingDirectory?: string
+  forceRefresh?: boolean
+}
+
+export interface CodexModelOption {
+  model: string
+  displayName: string
+  isDefault: boolean
+  defaultReasoningEffort: string
+  supportedReasoningEfforts: Array<{ reasoningEffort: string; description: string }>
+}
+
+export interface CodexModelCatalog {
+  models: CodexModelOption[]
+  fetchedAt: string
+  cached: boolean
+}

@@ -116,6 +116,11 @@ export async function updateIntakePriority(id: number, request: { priority: stri
   return response.data.data
 }
 
+export async function updateIntakeRequirementType(id: number, request: { requirementType: string }): Promise<IntakeDetail> {
+  const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/requirement-type`, request)
+  return response.data.data
+}
+
 export async function generateIntakeSqlDraft(id: number): Promise<IntakeDetail> {
   const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/sql-draft`, undefined, { timeout: 0 })
   return response.data.data

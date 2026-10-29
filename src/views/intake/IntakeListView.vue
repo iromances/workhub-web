@@ -31,6 +31,7 @@ import {
   updateIntakeBusinessLine,
   updateIntakeDevelopmentBranch,
   updateIntakePriority,
+  updateIntakeRequirementType,
   updateIntakeTodo,
   updateIntakeTodoStatus,
   updateIntakeZentaoLink,
@@ -53,6 +54,22 @@ import {
   validateIntakeTodoEditableForm,
   validateIntakeTodoStatusForm,
 } from './intakeTodoForms'
+
+import IntakeProcessInfoDialog from './IntakeProcessInfoDialog.vue'
+
+const processInfoDialog = ref<InstanceType<typeof IntakeProcessInfoDialog> | null>(null)
+
+async function onProcessInfoSaved(id: number) {
+  await loadIntakeRecords()
+  if (selectedDetail.value?.id === id) {
+    try {
+      await refreshSelectedDetail(id)
+    } catch (error) {
+      ElMessage.error('保存成功，但详情刷新失败，请重新打开详情')
+      console.error(error)
+    }
+  }
+}
 
 const authStore = useAuthStore()
 
@@ -96,6 +113,8 @@ const businessLineSubmitting = ref(false)
 const priorityDialogVisible = ref(false)
 const prioritySubmitting = ref(false)
 const priorityTarget = ref<IntakeSummary | null>(null)
+const requirementTypeDialogVisible = ref(false)
+const requirementTypeSubmitting = ref(false)
 const sqlDraftSubmitting = ref(false)
 const todoFormVisible = ref(false)
 const todoFormSubmitting = ref(false)
@@ -149,6 +168,9 @@ const businessLineForm = reactive({
 const priorityForm = reactive({
   priority: '',
 })
+const requirementTypeForm = reactive({
+  requirementType: '',
+})
 
 const todoForm = reactive({
   title: '',
@@ -193,6 +215,7 @@ const pauseDemandForm = reactive({
 })
 
 const priorityOptions = ['高', '中', '低']
+const requirementTypeOptions = ['研发需求', '数据提取/运维']
 
 const updateHistories = computed(() =>
   (selectedDetail.value?.histories || []).filter((item) => item.actionType === 'UPDATE'),
@@ -429,6 +452,46 @@ async function submitPriority() {
     console.error(error)
   } finally {
     prioritySubmitting.value = false
+  }
+}
+
+function openRequirementTypeDialog() {
+  if (!selectedDetail.value) {
+    return
+  }
+  requirementTypeForm.requirementType = selectedDetail.value.structuredData?.requirementType || ''
+  requirementTypeDialogVisible.value = true
+}
+
+function resetRequirementTypeDialog() {
+  requirementTypeForm.requirementType = ''
+}
+
+async function submitRequirementType() {
+  if (!selectedDetail.value) {
+    return
+  }
+  if (!requirementTypeOptions.includes(requirementTypeForm.requirementType)) {
+    ElMessage.warning('请选择需求类型')
+    return
+  }
+  const intakeId = selectedDetail.value.id
+  requirementTypeSubmitting.value = true
+  try {
+    const detail = normalizeIntakeDetail(await updateIntakeRequirementType(intakeId, { requirementType: requirementTypeForm.requirementType }))
+    if (!selectedDetail.value || selectedDetail.value.id !== intakeId) {
+      return
+    }
+    selectedDetail.value = detail
+    syncDevelopmentForms(detail)
+    requirementTypeDialogVisible.value = false
+    ElMessage.success('需求类型已保存')
+    await loadIntakeRecords()
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '保存需求类型失败'))
+    console.error(error)
+  } finally {
+    requirementTypeSubmitting.value = false
   }
 }
 
@@ -1026,7 +1089,7 @@ async function submitCreate() {
     attachmentFiles.value.forEach((file) => formData.append('attachments', file))
     await createUploadIntake(formData)
     createDialogVisible.value = false
-    ElMessage.success('需求已提交，AI 正在后台识别并归类')
+    ElMessage.success('需求已保存，AI 将在后台识别；识别失败后可重新识别')
     await loadIntakeRecords()
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '提交待整理记录失败'))
@@ -1354,6 +1417,7 @@ async function openStageActionDialog(row: IntakeSummary) {
     stageActionForm.actualCompletedTime = normalizePickerDateValue(row.actualCompletedTime) || normalizePickerDateValue(new Date().toISOString())
   }
   if (action === 'PASS_TESTING') {
+    stageActionForm.actualEffort = cleanBusinessValue(row.actualEffort)
     stageActionForm.scheduledAcceptanceDate = normalizePickerDateValue(row.scheduledAcceptanceDate) || normalizePickerDateValue(new Date().toISOString())
     stageActionForm.actualTestingEffort = cleanBusinessValue(row.actualTestingEffort)
     stageActionForm.actualTestingCompletedDate = normalizePickerDateValue(row.actualTestingCompletedDate) || normalizePickerDateValue(new Date().toISOString())
@@ -1391,17 +1455,19 @@ async function submitStageAction() {
   }
   const actualEffort = cleanBusinessValue(stageActionForm.actualEffort)
   const actualTestingEffort = cleanBusinessValue(stageActionForm.actualTestingEffort)
-  if (stageActionForm.action === 'SUBMIT_TESTING') {
-    if (!stageActionForm.occurredAt) {
-      ElMessage.warning('请选择实际提测日期')
-      return
-    }
+  if (['SUBMIT_TESTING', 'PASS_TESTING'].includes(stageActionForm.action)) {
     if (!actualEffort) {
       ElMessage.warning('请填写实际开发工时')
       return
     }
     if (parseEffortHours(actualEffort) === null) {
       ElMessage.warning('实际开发工时格式不正确，请输入如 8h 或 1d')
+      return
+    }
+  }
+  if (stageActionForm.action === 'SUBMIT_TESTING') {
+    if (!stageActionForm.occurredAt) {
+      ElMessage.warning('请选择实际提测日期')
       return
     }
     if (!stageActionForm.actualCompletedTime) {
@@ -2576,7 +2642,7 @@ function buildDemandStageTimeline(detail: IntakeDetail | null, analysis: Develop
 	  const currentStatus = detail?.demandStatus || ''
 	  const operationsDemand = isOperationsDemand(structuredData?.requirementType)
 	  const receivedAt = detail?.receivedAt
-	  const evaluationMetrics = buildEvaluationStageMetrics(analysis)
+	  const evaluationMetrics = buildEvaluationStageMetrics(analysis, detail?.processInfo)
 	  const schedulingMetrics = buildSchedulingStageMetrics(structuredData)
   const developmentMetrics = buildDevelopmentStageMetrics(structuredData)
   const testingMetrics = buildTestingStageMetrics(structuredData)
@@ -2633,8 +2699,8 @@ function stageMatchesCurrentStatus(stage: { status: string; currentStatuses?: st
   return (stage.currentStatuses || [stage.status]).includes(currentStatus)
 }
 
-function buildEvaluationStageMetrics(analysis: DevelopmentAnalysisResponse | null) {
-  const draft = analysis?.draft
+function buildEvaluationStageMetrics(analysis: DevelopmentAnalysisResponse | null, processInfo: IntakeDetail['processInfo']) {
+  const draft = processInfo?.values || analysis?.draft
   if (!draft) {
     return []
   }
@@ -3042,6 +3108,7 @@ onMounted(loadBaseData)
                 >
                   {{ developmentPlanFolderOpeningId === row.id ? '打开中...' : '开发方案' }}
                 </el-dropdown-item>
+                <el-dropdown-item v-if="canUpdateMetadata" @click="processInfoDialog?.open(row.id)">编辑</el-dropdown-item>
                 <el-dropdown-item v-if="canDeleteRecord" divided class="danger-dropdown-item" @click="handleDelete(row)">删除</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -3064,6 +3131,8 @@ onMounted(loadBaseData)
       />
     </div>
   </div>
+
+  <IntakeProcessInfoDialog ref="processInfoDialog" @saved="onProcessInfoSaved" />
 
   <el-dialog
     v-model="createDialogVisible"
@@ -3210,7 +3279,7 @@ onMounted(loadBaseData)
 	                </div>
 	                <div class="task-metric-grid">
 	                  <div class="task-metric-card">
-	                    <div class="task-metric-label">总预估工时</div>
+	                    <div class="task-metric-label">任务总预估工时</div>
 	                    <el-input
 	                      v-if="developmentAnalysis?.draft"
 	                      :model-value="firstDisplayValue(developmentAnalysis.draft.totalEstimatedEffort)"
@@ -3219,7 +3288,7 @@ onMounted(loadBaseData)
 	                    <div v-else class="task-metric-value">-</div>
 	                  </div>
 	                  <div class="task-metric-card">
-	                    <div class="task-metric-label">测试工时</div>
+	                    <div class="task-metric-label">任务测试预估工时</div>
 	                    <el-input
 	                      v-if="developmentAnalysis?.draft"
 	                      v-model="developmentAnalysis.draft.testingEstimatedEffort"
@@ -3434,6 +3503,9 @@ onMounted(loadBaseData)
         </el-form-item>
       </template>
       <template v-if="stageActionForm.action === 'PASS_TESTING'">
+        <el-form-item label="实际开发工时" required>
+          <el-input v-model="stageActionForm.actualEffort" placeholder="累计实际开发工时，例如 66h" />
+        </el-form-item>
         <el-form-item label="预约验收日期">
           <el-date-picker
             v-model="stageActionForm.scheduledAcceptanceDate"
@@ -3548,7 +3620,12 @@ onMounted(loadBaseData)
                         {{ selectedDetail.structuredData.proposerName || selectedDetail.senderName || '-' }}
                       </el-descriptions-item>
                       <el-descriptions-item label="提交时间">{{ formatDisplayTime(selectedDetail.structuredData.submittedTime) }}</el-descriptions-item>
-                      <el-descriptions-item label="需求类型">{{ selectedDetail.structuredData.requirementType || '-' }}</el-descriptions-item>
+                      <el-descriptions-item label="需求类型">
+                        <span class="copyable-detail-value">
+                          <span>{{ selectedDetail.structuredData.requirementType || '-' }}</span>
+                          <el-button v-if="canUpdateMetadata" link size="small" @click.stop="openRequirementTypeDialog">编辑</el-button>
+                        </span>
+                      </el-descriptions-item>
                       <el-descriptions-item label="需求名称" :span="2">
                         <span class="copyable-detail-value">
                           <span>{{ selectedDetail.structuredData.requirementName || selectedDetail.structuredData.requirementDigest || '-' }}</span>
@@ -3576,23 +3653,6 @@ onMounted(loadBaseData)
                       </el-descriptions-item>
                       <el-descriptions-item label="备注" :span="2">{{ selectedDetail.structuredData.remark || '-' }}</el-descriptions-item>
                     </el-descriptions>
-
-                    <template v-if="isDevelopmentRequirement(selectedDetail)">
-                      <div class="section-title">关联研发任务</div>
-                      <el-table
-                        v-if="selectedDetail.relatedWorkItems?.length"
-                        :data="selectedDetail.relatedWorkItems"
-                        size="small"
-                        border
-                      >
-                        <el-table-column prop="no" label="编号" width="150" />
-                        <el-table-column prop="title" label="任务" min-width="260" show-overflow-tooltip />
-                        <el-table-column prop="projectName" label="项目" width="160" show-overflow-tooltip />
-                        <el-table-column prop="ownerUserName" label="负责人" width="120" />
-                        <el-table-column prop="status" label="状态" width="100" />
-                      </el-table>
-                      <el-empty v-else description="尚未创建正式研发任务" :image-size="72" />
-                    </template>
 
 	                    <div class="section-title">需求描述</div>
 	                    <div class="detail-block">{{ selectedDetail.structuredData.requirementSummary || '-' }}</div>
@@ -4049,7 +4109,7 @@ onMounted(loadBaseData)
 	                      </div>
 	                      <div class="task-metric-grid">
 	                        <div class="task-metric-card">
-	                          <div class="task-metric-label">总预估工时</div>
+	                          <div class="task-metric-label">任务总预估工时</div>
 	                          <el-input
 	                            v-if="developmentAnalysis?.draft"
 	                            :model-value="firstDisplayValue(developmentAnalysis.draft.totalEstimatedEffort)"
@@ -4058,7 +4118,7 @@ onMounted(loadBaseData)
 	                          <div v-else class="task-metric-value">-</div>
 	                        </div>
 	                        <div class="task-metric-card">
-	                          <div class="task-metric-label">测试工时</div>
+	                          <div class="task-metric-label">任务测试预估工时</div>
 	                          <el-input
 	                            v-if="developmentAnalysis?.draft"
 	                            v-model="developmentAnalysis.draft.testingEstimatedEffort"
@@ -4359,6 +4419,27 @@ onMounted(loadBaseData)
     <template #footer>
       <el-button @click="priorityDialogVisible = false">取消</el-button>
       <el-button type="primary" :loading="prioritySubmitting" @click="submitPriority">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="requirementTypeDialogVisible" title="修改需求类型" width="420px" @closed="resetRequirementTypeDialog">
+    <el-form label-position="top">
+      <el-form-item label="需求类型" required>
+        <el-radio-group v-model="requirementTypeForm.requirementType">
+          <el-radio-button v-for="item in requirementTypeOptions" :key="item" :label="item" :value="item" />
+        </el-radio-group>
+      </el-form-item>
+    </el-form>
+    <el-alert
+      title="切换为数据提取/运维会清空研发分支名，后续走 SQL 草稿与运维处理流程；切换为研发需求会保留或自动生成研发分支名。修改类型不会自动重跑 AI 评估或迁移已生成的文档。"
+      type="info"
+      show-icon
+      :closable="false"
+    />
+
+    <template #footer>
+      <el-button @click="requirementTypeDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="requirementTypeSubmitting" @click="submitRequirementType">保存</el-button>
     </template>
   </el-dialog>
 

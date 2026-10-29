@@ -145,6 +145,38 @@ export interface SystemAlertSubsystemSaveRequest {
   remark?: string
 }
 
+export type SystemAlertWatchMode = 'ALL' | 'SELECTED'
+
+export interface SystemAlertScopeService {
+  id: number | null
+  subsystemName: string
+  serviceName: string
+  enabled: boolean
+}
+
+export interface SystemAlertScope {
+  id: number
+  businessLineCode: string
+  environmentCode: string
+  watchMode: SystemAlertWatchMode
+  services: SystemAlertScopeService[]
+  indexPatterns: string[]
+  enabled: boolean
+  remark: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SystemAlertScopeSaveRequest {
+  businessLineCode: string
+  environmentCode: string
+  watchMode: SystemAlertWatchMode
+  services: Array<Omit<SystemAlertScopeService, 'id'>>
+  indexPatterns: string[]
+  enabled: boolean
+  remark?: string
+}
+
 export interface SystemAlertSubsystemSummary {
   businessLineCode: string
   environmentCode: string
@@ -212,4 +244,55 @@ export interface SystemAlertDashboard {
   subsystems: SystemAlertSubsystem[]
   summaries: SystemAlertSubsystemSummary[]
   events: SystemAlertEvent[]
+}
+
+export interface SystemAlertEventBatchDeleteResponse {
+  deletedCount: number
+  deletedNotificationCount: number
+}
+
+export interface SystemAlertDeleteByMessageRequest {
+  messageKeyword: string
+}
+
+export interface SystemAlertDeleteByEventRequest {
+  eventId: number
+}
+
+export interface SystemAlertDeleteAndFilterRequest extends SystemAlertDeleteByMessageRequest {
+  businessLineCode?: string
+  environmentCode?: string
+  serviceName?: string
+  level?: string
+  eventCategory?: SystemAlertEventCategory
+  startTime?: string
+  endTime?: string
+}
+
+export type SystemAlertCleanupTaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED'
+export type SystemAlertCleanupTaskType = 'DELETE' | 'DELETE_EXACT_MESSAGE' | 'DELETE_AND_FILTER'
+
+export interface SystemAlertCleanupTask {
+  id: number
+  taskNo: string
+  taskType: SystemAlertCleanupTaskType
+  messageKeyword: string
+  businessLineCode: string | null
+  environmentCode: string | null
+  serviceName: string | null
+  level: string | null
+  eventCategory: SystemAlertEventCategory | null
+  startTime: string | null
+  endTime: string | null
+  status: SystemAlertCleanupTaskStatus
+  ruleId: number | null
+  maxEventId: number
+  processedEventId: number
+  deletedEventCount: number
+  deletedNotificationCount: number
+  errorMessage: string | null
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+  updatedAt: string
 }

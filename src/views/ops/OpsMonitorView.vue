@@ -474,7 +474,6 @@ onMounted(async () => {
       </el-form-item>
       <el-form-item>
         <el-button type="primary" :loading="detailLoading" @click="searchLogs">查询</el-button>
-        <el-button :loading="detailLoading" @click="loadLogs">刷新</el-button>
       </el-form-item>
     </el-form>
 
