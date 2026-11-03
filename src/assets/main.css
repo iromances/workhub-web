@@ -24,8 +24,10 @@ a {
   text-decoration: none;
 }
 
+html,
+body,
 #app {
-  min-height: 100vh;
+  height: 100%;
 }
 
 .page-card {

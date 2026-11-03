@@ -508,7 +508,7 @@ onMounted(loadNotifications)
 
 <style scoped>
 .layout-shell {
-  min-height: 100vh;
+  height: 100vh;
 }
 
 .layout-aside {

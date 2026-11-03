@@ -208,15 +208,33 @@ function resetLogFilters() {
   logFilters.dateRange = [formatDate(start), formatDate(end)]
   logFilters.author = ''
   logFilters.executorAppName = ''
-  logFilters.logStatus = 'ALL'
+  logFilters.logStatus = 'FAILED'
   logFilters.page = 1
   logFilters.pageSize = 20
+}
+
+function lastCheckWindow(): string[] | null {
+  const checkedDate = selectedMonitor.value?.lastCheckedAt?.split('T')[0] || ''
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(checkedDate)) {
+    return null
+  }
+  const end = new Date(`${checkedDate}T00:00:00`)
+  if (Number.isNaN(end.getTime())) {
+    return null
+  }
+  const start = new Date(end)
+  start.setDate(end.getDate() - 6)
+  return [formatDate(start), formatDate(end)]
 }
 
 async function openDetail(row: OpsMonitor) {
   selectedMonitor.value = row
   logPage.value = null
   resetLogFilters()
+  const checkWindow = lastCheckWindow()
+  if (checkWindow) {
+    logFilters.dateRange = checkWindow
+  }
   detailVisible.value = true
   await loadLogs()
 }
