@@ -93,7 +93,7 @@ const endpointTypeOptions: Array<{ label: string; value: ProjectGroupEndpointTyp
   { label: '其他', value: 'OTHER' },
 ]
 const systemForm = reactive({
-  systemScope: 'MIDDLE_PLATFORM' as 'PROJECT_GROUP' | 'MIDDLE_PLATFORM',
+  systemScope: 'MIDDLE_PLATFORM' as ProjectInvolvedSystem['systemScope'],
   projectGroup: '',
   systemName: '',
   description: '',

@@ -848,7 +848,7 @@ async function loadDevelopmentTaskOptions(projectGroup: string) {
 }
 
 function developmentSystemSelectOptions() {
-  const byName = new Map<string, ProjectInvolvedSystem>()
+  const byName = new Map<string, Pick<ProjectInvolvedSystem, 'id' | 'systemScope' | 'systemName' | 'enabled'>>()
   for (const system of developmentSystemOptions.value) {
     byName.set(system.systemName, system)
   }
@@ -859,13 +859,8 @@ function developmentSystemSelectOptions() {
         byName.set(systemName, {
           id: -byName.size - 1,
           systemScope: 'PROJECT_GROUP',
-          projectGroup: developmentAnalysis.value?.draft?.projectGroup || stageActionForm.projectGroup || '',
           systemName,
-          description: null,
           enabled: false,
-          sortOrder: 0,
-          createdAt: '',
-          updatedAt: '',
         })
       }
     }
@@ -928,8 +923,8 @@ function cleanNullableBusinessValue(value: string | null | undefined) {
   return cleaned || null
 }
 
-function normalizeDevelopmentAnalysisEffort(analysis: DevelopmentAnalysisResponse) {
-  if (!analysis.draft) {
+function normalizeDevelopmentAnalysisEffort(analysis: DevelopmentAnalysisResponse | null) {
+  if (!analysis?.draft) {
     return analysis
   }
   analysis.draft.totalEstimatedEffort = cleanNullableBusinessValue(analysis.draft.totalEstimatedEffort)
@@ -2391,12 +2386,13 @@ function resolveSubmittedTime(row: IntakeSummary) {
 }
 
 function formatDisplayTime(value: string | null | undefined) {
-  if (isBlankBusinessValue(value)) {
+  const cleaned = cleanBusinessValue(value)
+  if (!cleaned) {
     return '-'
   }
-  const parsed = parseDateTimeParts(value)
+  const parsed = parseDateTimeParts(cleaned)
   if (!parsed) {
-    return value.trim().replace('T', ' ')
+    return cleaned.replace('T', ' ')
   }
   const date = `${parsed.year}/${parsed.month}/${parsed.day}`
   if (!parsed.hour || !parsed.minute) {
@@ -2406,12 +2402,13 @@ function formatDisplayTime(value: string | null | undefined) {
 }
 
 function formatDisplayDate(value: string | null | undefined) {
-  if (isBlankBusinessValue(value)) {
+  const cleaned = cleanBusinessValue(value)
+  if (!cleaned) {
     return '-'
   }
-  const parsed = parseDateTimeParts(value)
+  const parsed = parseDateTimeParts(cleaned)
   if (!parsed) {
-    return value.trim().replace('T', ' ').slice(0, 10)
+    return cleaned.replace('T', ' ').slice(0, 10)
   }
   return `${parsed.year}/${parsed.month}/${parsed.day}`
 }
@@ -2436,10 +2433,11 @@ function parseDateTimeParts(value: string | null | undefined) {
 }
 
 function normalizePickerDateValue(value: string | null | undefined) {
-  if (isBlankBusinessValue(value)) {
+  const cleaned = cleanBusinessValue(value)
+  if (!cleaned) {
     return ''
   }
-  const normalized = value.trim().replace(/-/g, '/').replace('T', ' ')
+  const normalized = cleaned.replace(/-/g, '/').replace('T', ' ')
   const matched = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/)
   if (!matched) {
     return ''
@@ -2772,7 +2770,14 @@ function buildReleaseStageMetrics(structuredData: IntakeDetail['structuredData']
   ])
 }
 
-function compactMetrics<T extends { value: string | null | undefined }>(metrics: T[]) {
+interface DemandStageMetric {
+  label: string
+  value: string | null | undefined
+  tag?: string
+  type?: 'info' | 'danger'
+}
+
+function compactMetrics(metrics: DemandStageMetric[]) {
   return metrics.filter((metric) => !isBlankBusinessValue(metric.value))
 }
 

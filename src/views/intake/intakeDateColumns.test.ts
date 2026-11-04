@@ -61,6 +61,7 @@ function record(overrides: Partial<IntakeSummary>): IntakeSummary {
     approvalCode: null,
     submittedTime: null,
     requirementType: '研发需求',
+    priority: null,
     developmentBranchName: null,
     zentaoUrl: null,
     requirementDigest: null,
@@ -68,6 +69,7 @@ function record(overrides: Partial<IntakeSummary>): IntakeSummary {
     requirementName: null,
     requirementSummary: null,
     businessLine: null,
+    businessLineCode: null,
     remark: null,
     totalEstimatedEffort: null,
     developmentEstimatedEffort: null,
@@ -90,6 +92,7 @@ function record(overrides: Partial<IntakeSummary>): IntakeSummary {
     enrichmentStatus: null,
     status: 'CONFIRMED',
     convertedWorkItemId: null,
+    activeTodoCount: 0,
     ...overrides,
   }
 }
