@@ -241,6 +241,7 @@ onUnmounted(() => { active = false; stopPolling() })
         <h3 class="task-objective">{{ activeTask.specification.objective }}</h3>
         <p class="description">验收：{{ activeTask.specification.acceptanceCriteria }}</p>
         <div class="artifact-kinds"><el-tag v-for="kind in activeTask.specification.expectedArtifacts" :key="kind" effect="plain">{{ artifactLabels[kind] }}</el-tag></div>
+        <p v-if="activeTask.specification.expectedArtifacts.some(kind => ['DEPLOYMENT', 'VERIFICATION'].includes(kind))" class="description">本次完成目标：{{ activeTask.specification.completionTargets?.length ? activeTask.specification.completionTargets.map(scope => `${scope.businessLineCode} / ${scope.environmentCode === 'TEST' ? '测试' : '生产'}`).join('、') : '尚未明确，请重新分派任务' }}</p>
         <div class="drawer-toolbar"><el-button @click="loadRuns(false)">刷新</el-button><el-button v-if="canOperate" @click="editSchedule">调整周期</el-button><el-button v-if="canOperate" type="primary" :loading="operating" @click="start">开始新一轮</el-button></div>
         <el-alert v-if="drawerError" :title="drawerError" type="error" :closable="false" class="feedback" />
         <el-table v-loading="runsLoading" :data="runs" row-key="id" highlight-current-row @row-click="(run: AgentRun) => loadRunDetail(run.id)">

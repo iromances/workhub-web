@@ -62,6 +62,7 @@ async function sendReply() {
       <div v-if="canOperate"><el-button v-if="!terminal && !run.cancelRequested" :disabled="busy" @click="cancel">停止运行</el-button><el-button v-if="run.retryAllowed" :loading="busy" @click="retry">重试</el-button></div>
     </div>
     <p class="run-meta">本次 AI：{{ detail.providerBinding.channelType }} · {{ detail.configuration.model || '未记录模型' }} · 接入配置版本 {{ detail.providerBinding.configurationVersion }}</p>
+    <p v-if="detail.specification.expectedArtifacts.some(kind => ['DEPLOYMENT', 'VERIFICATION'].includes(kind))" class="run-meta">本轮完成目标：{{ detail.specification.completionTargets?.length ? detail.specification.completionTargets.map(scope => `${scope.businessLineCode} / ${scope.environmentCode === 'TEST' ? '测试' : '生产'}`).join('、') : '尚未明确，请重新分派任务' }}</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="feedback" />
     <el-alert v-if="run.errorMessage" :title="run.errorMessage" :type="run.status === 'FAILED' ? 'error' : 'warning'" :closable="false" show-icon class="feedback" />
     <el-alert v-if="run.status === 'CANCELLING'" title="正在确认执行与外部操作的停止结果，尚未完成取消。" type="warning" :closable="false" class="feedback" />

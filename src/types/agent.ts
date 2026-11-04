@@ -25,6 +25,7 @@ export interface AgentTaskSpecification {
   context: string | null
   acceptanceCriteria: string
   expectedArtifacts: AgentArtifactKind[]
+  completionTargets: AgentScope[]
   scopes: AgentScope[]
   toolCodes: string[]
 }
@@ -89,7 +90,8 @@ export interface AgentRunAcceptance {
   checkedAt: string
   satisfied: boolean
   items: { kind: AgentArtifactKind; status: 'SATISFIED' | 'MISSING' | 'BLOCKED' | 'UNAVAILABLE'; message: string
-    evidence: { kind: 'ARTIFACT' | 'CHANGE_SET'; id: string; contentHash: string }[] }[]
+    evidence: { kind: 'ARTIFACT' | 'CHANGE_SET'; id: string; contentHash: string }[]
+    targets?: { scope: AgentScope; status: string; message: string; evidence: { kind: string; id: string; contentHash: string }[] }[] }[]
 }
 export interface AgentOptions {
   providers: { id: number; code: string; name: string; channelType: string; defaultModel: string | null; enabled: boolean }[]

@@ -45,6 +45,10 @@ onUnmounted(() => { active = false; clear() })
       <article v-for="item in view.items" :key="item.kind" class="item">
         <div class="heading"><strong>{{ labels[item.kind] || item.kind }}</strong><el-tag :type="item.status === 'SATISFIED' ? 'success' : 'warning'">{{ states[item.status] || item.status }}</el-tag></div>
         <p>{{ item.message }}</p>
+        <div v-for="target in item.targets || []" :key="`${target.scope.businessLineCode}/${target.scope.environmentCode}`" class="target">
+          <div class="heading"><strong>{{ target.scope.businessLineCode }} / {{ target.scope.environmentCode === 'TEST' ? '测试' : '生产' }}</strong><el-tag :type="target.status === 'SATISFIED' ? 'success' : 'warning'">{{ states[target.status] || target.status }}</el-tag></div>
+          <p>{{ target.message }}</p>
+        </div>
         <details v-if="item.evidence.length"><summary>查看证据引用</summary>
           <div v-for="evidence in item.evidence" :key="evidence.id" class="evidence">
             <span>{{ evidence.kind === 'CHANGE_SET' ? '交付清单' : '产物' }}：{{ evidence.id }}</span>
@@ -63,6 +67,7 @@ onUnmounted(() => { active = false; clear() })
 .heading p { margin: 0; }
 .meta { color: #64748b; font-size: 12px; line-height: 1.7; }
 .item { border-bottom: 1px solid #e5e7eb; padding: 18px 0; }
+.target { margin-top: 12px; padding: 12px; background: #f6f8fa; }
 .item p { line-height: 1.7; overflow-wrap: anywhere; }
 summary { cursor: pointer; color: #64748b; font-size: 12px; }
 .evidence { display: grid; gap: 6px; padding: 12px; margin-top: 8px; background: #f6f8fa; overflow-wrap: anywhere; font-size: 12px; }
