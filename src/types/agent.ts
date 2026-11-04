@@ -89,3 +89,23 @@ export interface AgentOptions {
   tools: { code: string; description: string }[]
   scopes: { businessLineCode: string; businessLineName: string; environments: string[] }[]
 }
+
+export type AgentReconciliationAction = 'RESUME' | 'WAIT_INPUT' | 'CANCEL'
+export type AgentReconciliationOutcome = 'NOT_STARTED' | 'ENDED'
+export interface AgentReconciliationCall {
+  kind: 'API' | 'TOOL' | 'CLI'; key: string; toolCode: string | null; readOnly: boolean | null
+  host: string | null; pid: number | null; startInstant: string | null; phase: string | null
+  processState: string | null; receiptSource: string | null; receiptKey: string | null
+  needsConfirmation: boolean; requestPayloadJson: string | null
+}
+export interface AgentRunReconciliation {
+  runId: string; version: number; snapshotHash: string; leaseUntil: string | null
+  canReconcile: boolean; blockedReasons: string[]; resumeBlockedReasons: string[]
+  cancelRequested: boolean; calls: AgentReconciliationCall[]
+}
+export interface AgentReconciliationDecision { key: string; outcome: AgentReconciliationOutcome; evidence: string }
+export interface AgentRunReconciliationRequest {
+  requestKey: string; expectedVersion: number; snapshotHash: string
+  nextAction: AgentReconciliationAction; decisions: AgentReconciliationDecision[]
+}
+export interface AgentRunReconciliationResult { runId: string; status: string; version: number; eventKey: string }

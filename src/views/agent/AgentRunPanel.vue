@@ -5,6 +5,7 @@ import { cancelAgentRun, replyToAgentRun, retryAgentRun } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
 import type { AgentRun, AgentRunDetail } from '@/types/agent'
 import AgentChangesPanel from './AgentChangesPanel.vue'
+import AgentRunReconciliationPanel from './AgentRunReconciliationPanel.vue'
 import { errorText, eventLabels, eventSummary, localTime, prettyPayload, requestKey, statusLabels, statusTone } from './agentPresentation'
 
 const props = defineProps<{ detail: AgentRunDetail }>()
@@ -63,6 +64,7 @@ async function sendReply() {
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="feedback" />
     <el-alert v-if="run.errorMessage" :title="run.errorMessage" :type="run.status === 'FAILED' ? 'error' : 'warning'" :closable="false" show-icon class="feedback" />
     <el-alert v-if="run.status === 'CANCELLING'" title="正在确认执行与外部操作的停止结果，尚未完成取消。" type="warning" :closable="false" class="feedback" />
+    <AgentRunReconciliationPanel :run="run" @refresh="emit('refresh')" />
     <el-tabs v-model="tab">
       <el-tab-pane label="结果与产物" name="result">
         <pre v-if="run.resultText" class="result-text">{{ run.resultText }}</pre>
