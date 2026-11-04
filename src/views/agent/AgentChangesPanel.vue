@@ -62,6 +62,7 @@ function mrLink(value: string | null): string | undefined {
 const blockers: Record<string, string> = {
   NEWER_MANIFEST_EXISTS: '已有更新的候选版本', WORKSPACE_SET_CHANGED: '参与仓库已变化',
   CODE_CHANGED: '代码已变化', CODE_POLICY_CHANGED: '仓库授权策略已变化', CASE_PLAN_CHANGED: '关联问题或方案已变化',
+  BUG_CONTEXT_CHANGED: '关联缺陷的需求依据已变化，需要重新核对',
   CASE_REFERENCE_REQUIRED: '缺少已领取问题的方案关联', PLATFORM_TEST_EVIDENCE_MISSING: '缺少平台实际测试结果',
   REMOTE_DELIVERY_EVIDENCE_MISSING: '缺少远端分支交付确认',
 }

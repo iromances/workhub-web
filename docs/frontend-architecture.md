@@ -156,3 +156,12 @@ AI 接入弹框中的 CLI 通道从后端 `/manage/system/ai-provider/codex-mode
 ### 2026-11-04 ZCode CLI 接入补充
 
 AI 接入配置区分 Codex 与 GLM ZCode 的 CLI 协议。ZCode 使用已有程序、可选 Node 运行时、既有 Provider 定义和认证配置，模型/推理档位按 ZCode 实际配置填写；不会套用 Codex 模型目录或触发软件安装。Agent 工作台原生任务统一使用获授权的 WorkHub 工具，连接测试仅作最小模型请求。旧本地研发分析场景暂不提供 ZCode 选项；测试环境的 Jenkins 独立构建测试与人工发布审核分别呈现，本次不执行生产构建测试。
+
+
+### Agent 缺陷关联历史
+
+问题详情使用后端 `bugContext` 汇总提醒所有最新关联的原文变化，独立分页接口 `/api/autonomy/cases/{id}/bugs` 返回关联历史。`AgentCaseBugsPanel.vue` 显示原文快照、AI依据、最新/历史关联、原文当前性、证据引用及环境限制；需要 `work-item:view`。请求失败清空原关联内容，关闭详情、切换问题/Agent及KeepAlive停用后丢弃旧响应。前端不从当前页推算全量变化，不把AI关联显示为修复确认。
+
+权限补充：缺陷查看权限撤销时，无关联问题切回 AI 分析；含缺陷关联的问题清除全部详情，并拒绝无权限时到达的详情结果，与后端详情权限契约一致。
+
+构建类型检查显式使用 `tsconfig.app.json` 和 `tsconfig.node.json`；根 tsconfig 只有项目引用，不能仅以裸 `vue-tsc --noEmit` 退出成功作为应用类型验证。标准 build 已包含两项检查；本阶段使用 `--mode test` 构建，未触发生产构建。

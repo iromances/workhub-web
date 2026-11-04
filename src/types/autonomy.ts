@@ -39,4 +39,15 @@ export interface AutonomyCaseDetail {
   proposals: PageResponse<AutonomyProposal>
   relatedRuns: { caseId: string; runId: string; relation: string; createdAt: string }[]
   relatedRunTotal: number
+  bugContext: { historyCount: number; bugCount: number; changedCount: number; unavailableCount: number }
+}
+
+export interface AutonomyBugLink {
+  link: {
+    id: string; caseId: string; workItemId: number; workItemVersion: string; snapshotJson: string
+    observationId: string; evidencePointer: string; signalId: string; reason: string
+    runId: string; caseVersion: number; createdAt: string
+  }
+  latest: boolean
+  sourceState: 'CURRENT' | 'CHANGED' | 'UNAVAILABLE'
 }

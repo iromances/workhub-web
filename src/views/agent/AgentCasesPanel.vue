@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { computed, onActivated, onDeactivated, onUnmounted, ref, watch } from 'vue'
 import { fetchAutonomyCase, fetchAutonomyCases } from '@/api/autonomy'
+import { useAuthStore } from '@/stores/auth'
+import AgentCaseBugsPanel from './AgentCaseBugsPanel.vue'
 import type { AgentDefinition, AgentOptions } from '@/types/agent'
 import type { AutonomyAnalysis, AutonomyCase, AutonomyCaseDetail } from '@/types/autonomy'
 import { errorText, localTime, prettyPayload, scopeKey } from './agentPresentation'
 
 const props = defineProps<{ agent: AgentDefinition; options: AgentOptions }>()
+const auth = useAuthStore()
+const canViewBugs = computed(() => auth.hasPermission('work-item:view'))
+const bugPermissionError = '缺少缺陷查看权限，无法查看含缺陷关联的问题详情。'
 const selectedScope = ref('')
 const page = ref(1)
 const total = ref(0)
@@ -33,6 +38,7 @@ const fields: { key: Exclude<keyof AutonomyAnalysis, 'changeType'>; label: strin
   { key: 'facts', label: '事实摘要' }, { key: 'hypothesis', label: '原因假设' }, { key: 'impact', label: '影响范围' },
   { key: 'plan', label: '处理方案' }, { key: 'acceptance', label: '验收方法' }, { key: 'rollback', label: '回退方案' }, { key: 'unknowns', label: '尚待核实' },
 ]
+const bugContextChanged = computed(() => !!detail.value && (detail.value.bugContext.changedCount > 0 || detail.value.bugContext.unavailableCount > 0))
 const analyses = computed(() => (detail.value?.proposals.items || []).map(proposal => {
   let parsed: Partial<AutonomyAnalysis> | null = null
   try {
@@ -82,10 +88,20 @@ async function loadDetail() {
   detailLoading.value = true; detailError.value = ''; detail.value = null
   try {
     const result = await fetchAutonomyCase(agentId, id, evidencePage.value, proposalPage.value)
-    if (epoch === detailEpoch && props.agent.id === agentId && selectedId.value === id && drawer.value && active) detail.value = result
+    if (epoch === detailEpoch && props.agent.id === agentId && selectedId.value === id && drawer.value && active) {
+      if (!canViewBugs.value && result.bugContext.historyCount > 0) throw new Error(bugPermissionError)
+      detail.value = result
+    }
   } catch (cause) { if (epoch === detailEpoch) detailError.value = errorText(cause) }
   finally { if (epoch === detailEpoch) detailLoading.value = false }
 }
+watch(canViewBugs, allowed => {
+  if (allowed) return
+  if (tab.value === 'bugs') tab.value = 'analysis'
+  if (detail.value?.bugContext.historyCount) {
+    detailEpoch++; detail.value = null; detailLoading.value = false; detailError.value = bugPermissionError
+  }
+})
 watch(() => `${props.agent.id}:${scopes.value.map(scopeKey).join(',')}`, () => {
   selectedScope.value = scopes.value[0] ? scopeKey(scopes.value[0]) : ''
   initialized = true; changeScope()
@@ -124,12 +140,15 @@ onUnmounted(() => { active = false; listEpoch++; detailEpoch++ })
             <el-descriptions-item label="首次发生">{{ localTime(detail.caseInfo.firstSeenAt) }}</el-descriptions-item><el-descriptions-item label="最近发生">{{ localTime(detail.caseInfo.lastSeenAt) }}</el-descriptions-item>
             <el-descriptions-item label="最近观察">{{ localTime(detail.caseInfo.lastObservedAt) }}</el-descriptions-item><el-descriptions-item label="去重后证据">{{ detail.caseInfo.occurrenceCount }} 条</el-descriptions-item>
           </el-descriptions>
+          <el-alert v-if="bugContextChanged" title="关联缺陷的需求依据已变化，已有方案与候选代码需要重新核对。"
+            :description="`${detail.bugContext.changedCount} 项缺陷原文已变化，${detail.bugContext.unavailableCount} 项原缺陷当前不可用；${canViewBugs ? '请在关联缺陷中核对历史与证据。' : '请由有缺陷查看权限的成员核对历史与证据。'}`"
+            type="warning" :closable="false" show-icon class="feedback" />
           <el-tabs v-model="tab">
             <el-tab-pane :label="`AI 分析（${detail.proposals.total}）`" name="analysis">
               <p class="description">以下内容为 Agent 的分析建议，实际修复、测试和发布结果需另行核实。</p>
               <el-empty v-if="!analyses.length" description="尚未形成分析方案" :image-size="55" />
               <article v-for="proposal in analyses" :key="proposal.id" class="proposal">
-                <div class="tags"><strong>处理版本 {{ proposal.caseVersion }} 的方案</strong><el-tag effect="plain" type="info">AI 分析</el-tag><span class="muted">{{ localTime(proposal.createdAt) }}</span></div>
+                <div class="tags"><strong>处理版本 {{ proposal.caseVersion }} 的方案</strong><el-tag effect="plain" type="info">AI 分析</el-tag><el-tag effect="plain" :type="proposal.id === detail.caseInfo.latestProposalId && !bugContextChanged ? 'primary' : 'warning'">{{ proposal.id !== detail.caseInfo.latestProposalId ? '历史方案' : bugContextChanged ? '依据待重新核对' : '当前方案' }}</el-tag><span class="muted">{{ localTime(proposal.createdAt) }}</span></div>
                 <template v-if="proposal.parsed"><p>建议类型：{{ changeLabels[proposal.parsed.changeType || ''] || proposal.parsed.changeType || '未记录' }}</p><dl><template v-for="field in fields" :key="field.key"><dt>{{ field.label }}</dt><dd>{{ proposal.parsed[field.key] || '未记录' }}</dd></template></dl></template>
                 <pre v-else>{{ prettyPayload(proposal.proposalJson) }}</pre>
               </article>
@@ -143,6 +162,9 @@ onUnmounted(() => { active = false; listEpoch++; detailEpoch++ })
                 <details><summary>查看来源引用</summary><dl><dt>来源事件</dt><dd>{{ signal.sourceEventId }}</dd><dt>监测记录</dt><dd>{{ signal.observationId }}</dd><dt>记录位置</dt><dd>{{ signal.evidencePointer }}</dd></dl></details>
               </article>
               <el-pagination v-model:current-page="evidencePage" :total="detail.signals.total" :page-size="5" layout="total, prev, pager, next" @current-change="loadDetail" />
+            </el-tab-pane>
+            <el-tab-pane v-if="canViewBugs" :label="`关联缺陷（${detail.bugContext.bugCount}）`" name="bugs">
+              <AgentCaseBugsPanel :agent-id="agent.id" :case-id="detail.caseInfo.id" :active="drawer && tab === 'bugs'" />
             </el-tab-pane>
             <el-tab-pane :label="`关联运行（${detail.relatedRunTotal}）`" name="runs">
               <p v-if="detail.caseInfo.activeRunId" class="description">当前处理运行：{{ detail.caseInfo.activeRunId }}</p>
