@@ -128,6 +128,11 @@ onActivated(() => { if (!active) { active = true; void load() } })
       <p v-else class="muted">Agent 尚未提交总体结论。</p>
       <el-alert :title="view.currentConstraintsSatisfied ? '当前证据约束全部满足' : '当前证据约束尚未全部满足'" :type="view.currentConstraintsSatisfied ? 'success' : 'warning'" :closable="false" show-icon />
       <p class="muted">核验时间：{{ localTime(view.constraintsCheckedAt) }}。历史结论保留，当前数据新鲜度可能变化；问题是否关闭以巡检问题状态为准。</p>
+      <article v-if="view.caseResolution" class="conclusion">
+        <strong>{{ view.caseClosed ? '此复查已支持原问题关闭' : '此复查保留历史关闭记录，问题已重新进入处理' }}</strong>
+        <p class="muted">关闭时间：{{ localTime(view.caseResolution.createdAt) }} · 关闭时处理版本 {{ view.caseResolution.resolvedVersion }}。当前状态以巡检问题为准。</p>
+        <details><summary>查看关闭判断与问题标识</summary><p class="reason">{{ view.caseResolution.reason }}</p><p class="muted">问题：{{ view.caseResolution.caseId }}</p></details>
+      </article>
       <article v-for="check in view.checks" :key="check.checkId" class="check-status">
         <h5>{{ standards.get(check.checkId)?.monitoringItem || check.checkId }}</h5>
         <p class="muted">{{ monitoringTools[standards.get(check.checkId)?.toolCode || ''] || standards.get(check.checkId)?.toolCode }} · {{ standards.get(check.checkId)?.scope.businessLineCode }} / {{ standards.get(check.checkId)?.scope.environmentCode }}</p>

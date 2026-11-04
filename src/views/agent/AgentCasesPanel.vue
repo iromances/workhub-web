@@ -3,6 +3,7 @@ import { computed, onActivated, onDeactivated, onUnmounted, ref, watch } from 'v
 import { fetchAutonomyCase, fetchAutonomyCases } from '@/api/autonomy'
 import { useAuthStore } from '@/stores/auth'
 import AgentCaseBugsPanel from './AgentCaseBugsPanel.vue'
+import AgentCaseResolutionsPanel from './AgentCaseResolutionsPanel.vue'
 import type { AgentDefinition, AgentOptions } from '@/types/agent'
 import type { AutonomyAnalysis, AutonomyCase, AutonomyCaseDetail } from '@/types/autonomy'
 import { errorText, localTime, prettyPayload, scopeKey } from './agentPresentation'
@@ -165,6 +166,9 @@ onUnmounted(() => { active = false; listEpoch++; detailEpoch++ })
             </el-tab-pane>
             <el-tab-pane v-if="canViewBugs" :label="`关联缺陷（${detail.bugContext.bugCount}）`" name="bugs">
               <AgentCaseBugsPanel :agent-id="agent.id" :case-id="detail.caseInfo.id" :active="drawer && tab === 'bugs'" />
+            </el-tab-pane>
+            <el-tab-pane label="关闭历史" name="resolutions">
+              <AgentCaseResolutionsPanel :agent-id="agent.id" :problem="detail.caseInfo" :active="drawer && tab === 'resolutions'" />
             </el-tab-pane>
             <el-tab-pane :label="`关联运行（${detail.relatedRunTotal}）`" name="runs">
               <p v-if="detail.caseInfo.activeRunId" class="description">当前处理运行：{{ detail.caseInfo.activeRunId }}</p>

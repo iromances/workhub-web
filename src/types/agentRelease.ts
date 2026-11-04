@@ -1,3 +1,4 @@
+import type { AutonomyCaseResolution } from '@/types/autonomy'
 import type { AgentScope, AgentArtifact } from './agent'
 import type { AgentChangeDetail } from './agentChange'
 
@@ -51,7 +52,7 @@ export interface AgentVerificationView {
   id: string; planId: string; runId: string; changeSetId: string; stage: string; manifestHash: string; approvedSnapshotHash: string
   status: 'OBSERVING' | 'PASSED' | 'FAILED'; version: number; constraintsCheckedAt: string; currentConstraintsSatisfied: boolean
   deployedAt: string; verificationPlan: AgentReleaseVerificationPlan; nextCheckAt: string | null; artifactId: string | null
-  checks: AgentVerificationProgress[]; caseClosed: boolean
+  checks: AgentVerificationProgress[]; caseClosed: boolean; caseResolution: AutonomyCaseResolution | null; caseStatus: string | null
   conclusion: null | { assessment: 'PASS' | 'FAIL' | 'INCONCLUSIVE'; reason: string; historicalDataPending: boolean
     conclusionSource: 'AI_ASSESSMENT'; platformConstraintsSatisfied: boolean; checks: AgentVerificationProgress[]; recordedAt: string }
 }

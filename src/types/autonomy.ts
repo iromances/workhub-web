@@ -51,3 +51,10 @@ export interface AutonomyBugLink {
   latest: boolean
   sourceState: 'CURRENT' | 'CHANGED' | 'UNAVAILABLE'
 }
+
+export interface AutonomyCaseResolution {
+  id: string; caseId: string; caseVersion: number; resolvedVersion: number; evidenceVersion: number
+  runId: string; verificationId: string; planId: string; changeSetId: string; manifestHash: string
+  proposalId: string; proposalHash: string; artifactId: string; artifactHash: string; checkIdsJson: string
+  windowStart: string; windowEnd: string; reason: string; createdAt: string
+}

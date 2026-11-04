@@ -2,7 +2,7 @@ import type { AxiosResponse } from 'axios'
 import http from './http'
 import type { ApiResponse, PageResponse } from '@/types/http'
 import type { AgentScope } from '@/types/agent'
-import type { AutonomyCase, AutonomyCaseDetail, AutonomyBugLink } from '@/types/autonomy'
+import type { AutonomyCase, AutonomyCaseDetail, AutonomyBugLink, AutonomyCaseResolution } from '@/types/autonomy'
 
 async function data<T>(call: Promise<AxiosResponse<ApiResponse<T>>>): Promise<T> {
   const response = await call
@@ -16,3 +16,6 @@ export const fetchAutonomyCase = (agentId: string, caseId: string, evidencePage:
 
 export const fetchAutonomyCaseBugs = (agentId: string, caseId: string, page: number) =>
   data(http.get<ApiResponse<PageResponse<AutonomyBugLink>>>(`/autonomy/cases/${encodeURIComponent(caseId)}/bugs`, { params: { agentId, page, pageSize: 5 } }))
+
+export const fetchAutonomyCaseResolutions = (agentId: string, caseId: string, page: number) =>
+  data(http.get<ApiResponse<PageResponse<AutonomyCaseResolution>>>(`/autonomy/cases/${encodeURIComponent(caseId)}/resolutions`, { params: { agentId, page, pageSize: 5 } }))
