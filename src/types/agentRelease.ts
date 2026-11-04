@@ -1,6 +1,14 @@
 import type { AgentScope, AgentArtifact } from './agent'
 import type { AgentChangeDetail } from './agentChange'
 
+export interface AgentReleaseVerificationPlan {
+  checks: {
+    id: string; scope: AgentScope; toolCode: string; monitoringItem: string; passCondition: string
+    observationSeconds: number; sampleIntervalSeconds: number; maxDataAgeSeconds: number; minimumSamples: number; evidenceRequirements: string
+  }[]
+  historicalDataHandling: string; failureHandling: string
+}
+
 export interface AgentReleasePlan {
   id: string; runId: string; changeSetId: string; manifestHash: string; snapshotHash: string
   stage: 'TEST_DEPLOY' | 'PROD_DEPLOY'; status: string; version: number
@@ -23,7 +31,7 @@ export interface AgentReleaseReview {
 }
 export interface AgentReleaseDetail extends AgentReleasePlan {
   current: boolean; readyForReview: boolean; blockers: string[]; reviews: AgentReleaseReview[]; deployments: AgentDeployment[]
-  snapshot: { schemaVersion: number; change: AgentChangeDetail; evidence: AgentArtifact[]; blockers: string[]; steps: AgentReleaseStep[] }
+  snapshot: { schemaVersion: number; change: AgentChangeDetail; evidence: AgentArtifact[]; blockers: string[]; steps: AgentReleaseStep[]; verificationPlan?: AgentReleaseVerificationPlan | null }
 }
 export interface AgentReleaseReviewRequest {
   requestKey: string; expectedVersion: number; snapshotHash: string; decision: 'APPROVED' | 'REJECTED'; comment: string

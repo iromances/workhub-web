@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { fetchAgentReleasePlan, fetchAgentReleasePlans, reviewAgentReleasePlan, releaseRequestRejected } from '@/api/agentRelease'
 import type { AgentReleaseDetail, AgentReleasePlan, AgentReleaseReviewRequest } from '@/types/agentRelease'
 import { useAuthStore } from '@/stores/auth'
+import AgentReleaseVerificationPanel from './AgentReleaseVerificationPanel.vue'
 import { errorText, localTime, prettyPayload, requestKey } from './agentPresentation'
 
 const props = defineProps<{ changeSetId: string }>()
@@ -22,10 +23,11 @@ const attempts = ref<Record<string, AgentReleaseReviewRequest>>({})
 let active = true
 let listEpoch = 0
 let detailEpoch = 0
+const canView = computed(() => auth.hasPermission('agent:task:view') && auth.hasPermission('agent:code:use'))
 const canReview = computed(() => auth.hasPermission('autonomy:release:review'))
 const pending = computed(() => attempts.value[selected.value])
 const isWaiting = computed(() => detail.value?.status === 'WAITING_REVIEW')
-const canApprove = computed(() => canReview.value && isWaiting.value && detail.value?.readyForReview && !busy.value && !pending.value)
+const canApprove = computed(() => canReview.value && isWaiting.value && detail.value?.readyForReview && !!detail.value?.snapshot.verificationPlan && !busy.value && !pending.value)
 const stage = (value: string) => value === 'PROD_DEPLOY' ? '生产上线' : '测试发布'
 const labels: Record<string, string> = {
   WAITING_REVIEW: '等待人工审核', APPROVED: '已批准，等待执行', EXECUTING: '发布执行中', NEEDS_ATTENTION: '需核对原请求',
@@ -34,6 +36,7 @@ const labels: Record<string, string> = {
   DEPLOYING: '等待实际部署回执', UNKNOWN: '原请求结果待核对', ABORTED: 'Jenkins 已取消', BLOCKED: '未发出，已阻止',
 }
 const blockers: Record<string, string> = {
+  VERIFICATION_PLAN_MISSING: '缺少随本次发布审核的业务复查标准',
   PLATFORM_TEST_EVIDENCE_MISSING: '缺少平台实际测试结果', MANIFEST_NOT_READY: '候选清单尚未满足发布条件',
   MANIFEST_NOT_CURRENT: '候选清单已失效', TEST_ENVIRONMENT_VERIFICATION_MISSING: '缺少同一版本测试发布后的业务验证',
   RELEASE_MATERIAL_CHANGED: '审核材料已变化，需重新准备计划', RELEASE_MATERIAL_UNAVAILABLE: '当前发布材料或绑定不可用',
@@ -52,24 +55,25 @@ function tone(status: string): 'success' | 'warning' | 'danger' | 'info' {
 }
 function resetDetail() { ++detailEpoch; detail.value = null; detailError.value = ''; reviewError.value = ''; selected.value = ''; comment.value = ''; detailLoading.value = false; busy.value = false }
 async function load() {
-  if (!active) return
   const epoch = ++listEpoch; const id = props.changeSetId
-  rows.value = []; error.value = ''; resetDetail(); loading.value = true
+  rows.value = []; error.value = ''; resetDetail(); loading.value = false
+  if (!active || !canView.value) return
+  loading.value = true
   try {
     const result = await fetchAgentReleasePlans(id)
-    if (epoch !== listEpoch || !active || id !== props.changeSetId) return
+    if (epoch !== listEpoch || !active || !canView.value || id !== props.changeSetId) return
     rows.value = result
     if (result.length) await select(result[0])
   } catch (cause) { if (epoch === listEpoch && active) error.value = errorText(cause) }
   finally { if (epoch === listEpoch) loading.value = false }
 }
 async function select(row: AgentReleasePlan) {
-  if (busy.value) return
+  if (busy.value || !active || !canView.value) return
   resetDetail(); selected.value = row.id; detailLoading.value = true
   const epoch = ++detailEpoch; const changeId = props.changeSetId
   try {
     const result = await fetchAgentReleasePlan(row.id)
-    if (epoch !== detailEpoch || !active || changeId !== props.changeSetId) return
+    if (epoch !== detailEpoch || !active || !canView.value || changeId !== props.changeSetId) return
     if (result.id !== row.id || result.changeSetId !== changeId) throw new Error('发布计划不属于当前候选版本')
     detail.value = result
     const attempt = attempts.value[result.id]
@@ -80,8 +84,8 @@ async function select(row: AgentReleasePlan) {
 }
 async function review(decision: 'APPROVED' | 'REJECTED', retry = false) {
   const target = detail.value
-  if (!target || !canReview.value || busy.value) return
-  if (!retry && (!comment.value.trim() || !isWaiting.value || pending.value || decision === 'APPROVED' && !target.readyForReview)) return
+  if (!target || !active || !canView.value || !canReview.value || busy.value) return
+  if (!retry && (!comment.value.trim() || !isWaiting.value || pending.value || decision === 'APPROVED' && (!target.readyForReview || !target.snapshot.verificationPlan))) return
   const epoch = detailEpoch; const changeId = props.changeSetId
   const request = retry ? attempts.value[target.id] : { requestKey: requestKey(), expectedVersion: target.version, snapshotHash: target.snapshotHash, decision, comment: comment.value.trim() }
   if (!request) return
@@ -90,17 +94,17 @@ async function review(decision: 'APPROVED' | 'REJECTED', retry = false) {
     if (!retry) {
       try {
         await ElMessageBox.confirm(decision === 'APPROVED'
-          ? `批准第 ${target.snapshot.change.revision} 版的${stage(target.stage)}？目标：${targets.value}，共 ${target.snapshot.steps.length} 个 Job。WorkHub 将按已审核顺序自动调用 Jenkins。`
+          ? `批准第 ${target.snapshot.change.revision} 版的${stage(target.stage)}？目标：${targets.value}，共 ${target.snapshot.steps.length} 个 Job，同时批准 ${target.snapshot.verificationPlan?.checks.length || 0} 项业务复查标准。WorkHub 将按已审核顺序自动调用 Jenkins。`
           : '驳回本组发布计划并将审核意见交给原 Agent 任务？', decision === 'APPROVED' ? '审核并执行发布' : '驳回发布计划',
         { type: 'warning', confirmButtonText: decision === 'APPROVED' ? '批准并执行' : '确认驳回', cancelButtonText: '返回核对' })
       } catch { return }
     }
-    if (epoch !== detailEpoch || !active || changeId !== props.changeSetId) return
+    if (epoch !== detailEpoch || !active || !canView.value || !canReview.value || changeId !== props.changeSetId) return
     attempts.value[target.id] = request
     const result = await reviewAgentReleasePlan(target.id, request)
     if (result.id !== target.id || result.changeSetId !== changeId) throw new Error('审核返回的计划身份不一致')
     delete attempts.value[target.id]
-    if (epoch !== detailEpoch || !active || changeId !== props.changeSetId) return
+    if (epoch !== detailEpoch || !active || !canView.value || !canReview.value || changeId !== props.changeSetId) return
     detail.value = result; comment.value = ''
     rows.value = rows.value.map(row => row.id === result.id ? result : row)
     ElMessage.success(request.decision === 'APPROVED' ? '整组审核已通过，WorkHub 将自动执行发布' : '驳回意见已保存到原任务')
@@ -112,16 +116,16 @@ async function review(decision: 'APPROVED' | 'REJECTED', retry = false) {
   finally { if (epoch === detailEpoch) busy.value = false }
 }
 function invalidate() { active = false; ++listEpoch; rows.value = []; loading.value = false; resetDetail() }
-watch(() => props.changeSetId, () => { attempts.value = {}; void load() }, { immediate: true })
+watch(() => [props.changeSetId, auth.userName, auth.permissions.slice().sort().join('|')], () => { attempts.value = {}; void load() }, { immediate: true })
 onDeactivated(invalidate)
 onBeforeUnmount(invalidate)
 onActivated(() => { if (!active) { active = true; void load() } })
 </script>
 
 <template>
-  <section class="release-panel">
+  <section v-if="canView" class="release-panel">
     <div class="heading"><h3>发布审核</h3><el-button :loading="loading" :disabled="busy" @click="load">刷新发布计划</el-button></div>
-    <p class="muted">人工核对整组提交、实测结果和目标环境。审核通过后，由 WorkHub 调用既有 Jenkins 流程。</p>
+    <p class="muted">人工核对整组提交、实测结果、目标环境和业务复查标准。审核通过后，由 WorkHub 调用既有 Jenkins 流程。</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <el-table v-loading="loading" :data="rows" row-key="id" :max-height="250" :current-row-key="selected" highlight-current-row @row-click="select">
       <el-table-column label="发布阶段" width="130"><template #default="{ row }"><el-button link type="primary" @click.stop="select(row)">{{ stage(row.stage) }}</el-button></template></el-table-column>
@@ -141,6 +145,7 @@ onActivated(() => { if (!active) { active = true; void load() } })
         <h4>本次审核的准确提交</h4>
         <div v-for="repo in detail.snapshot.change.manifest.repositories" :key="repo.repositoryId" class="commit"><strong>{{ repo.repositoryName }}</strong><code>{{ repo.resultSha }}</code></div>
         <details><summary>查看本次冻结的方案、验收及回退说明</summary><dl><template v-for="(label, key) in { summary: '变更说明', impact: '影响范围', acceptance: '验收建议', rollback: '回退建议' }" :key="key"><dt>{{ label }}</dt><dd>{{ detail.snapshot.change.manifest.plan[key] }}</dd></template></dl></details>
+        <AgentReleaseVerificationPanel :plan="detail.snapshot.verificationPlan" />
         <h4>Job 顺序与发布进度</h4>
         <div v-for="step in stepRows" :key="step.requestId" class="step">
           <div class="heading"><strong>{{ step.order }}. {{ step.binding.binding.name }}</strong><el-tag :type="tone(step.deployment?.status || 'PREPARED')">{{ step.deployment ? labels[step.deployment.status] || step.deployment.status : '尚未登记执行' }}</el-tag></div>
