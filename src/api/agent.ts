@@ -1,7 +1,7 @@
 import type { AxiosResponse } from 'axios'
 import http from './http'
 import type { ApiResponse, PageResponse } from '@/types/http'
-import type { AgentConfiguration, AgentDefinition, AgentOptions, AgentRun, AgentRunDetail, AgentRunReconciliation, AgentRunReconciliationRequest, AgentRunReconciliationResult, AgentSchedule, AgentTask, AgentTaskCreate } from '@/types/agent'
+import type { AgentConfiguration, AgentDefinition, AgentOptions, AgentRun, AgentRunDetail, AgentRunAcceptance, AgentRunReconciliation, AgentRunReconciliationRequest, AgentRunReconciliationResult, AgentSchedule, AgentTask, AgentTaskCreate } from '@/types/agent'
 
 async function data<T>(call: Promise<AxiosResponse<ApiResponse<T>>>): Promise<T> {
   const response = await call
@@ -26,6 +26,8 @@ export const fetchAgentRun = (taskId: string, runId: string) => data(http.get<Ap
 export const cancelAgentRun = (run: AgentRun) => data(http.post<ApiResponse<AgentRun>>(`/agent-tasks/${segment(run.taskId)}/runs/${segment(run.id)}/cancel`, { expectedVersion: run.version }))
 export const retryAgentRun = (run: AgentRun, requestKey: string) => data(http.post<ApiResponse<AgentRun>>(`/agent-tasks/${segment(run.taskId)}/runs/${segment(run.id)}/retry`, { expectedVersion: run.version, requestKey }))
 export const replyToAgentRun = (run: AgentRun, requestKey: string, message: string) => data(http.post<ApiResponse<AgentRun>>(`/agent-tasks/${segment(run.taskId)}/messages`, { runId: run.id, expectedVersion: run.version, requestKey, message }))
+
+export const fetchAgentRunAcceptance = (taskId: string, runId: string) => data(http.get<ApiResponse<AgentRunAcceptance>>(`/agent-tasks/${segment(taskId)}/runs/${segment(runId)}/acceptance`))
 
 export const fetchAgentRunReconciliation = (taskId: string, runId: string) => data(http.get<ApiResponse<AgentRunReconciliation>>(`/agent-tasks/${segment(taskId)}/runs/${segment(runId)}/reconciliation`))
 export const reconcileAgentRun = (taskId: string, runId: string, request: AgentRunReconciliationRequest) => data(http.post<ApiResponse<AgentRunReconciliationResult>>(`/agent-tasks/${segment(taskId)}/runs/${segment(runId)}/reconciliation`, request))

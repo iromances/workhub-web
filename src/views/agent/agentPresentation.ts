@@ -13,7 +13,7 @@ export const eventLabels: Record<string, string> = {
   TOOL_REQUEST: '调用工具', TOOL_RESULT: '工具结果', TOOL_IDENTITY: '请求记录', STEP_COMPLETED: '行动完成',
   HUMAN_INPUT: '人工补充', INPUT_CHANGED: '按新指令继续', FORMAT_ERROR: '调整行动格式',
   CLI_REQUEST: '启动 AI 任务', CLI_STARTED: 'AI 任务已启动', CLI_PROGRESS: '执行进度', CLI_RESULT: 'AI 任务结果',
-  CODE_DELIVERY: '代码交付记录',
+  CODE_DELIVERY: '代码交付记录', ACCEPTANCE_CHECKED: '产物验收结果',
   MANUAL_RECONCILIATION: '人工核对执行结果', MANUAL_RECONCILIATION_HANDLED: '旧行动已人工核对',
   CANCEL_REQUESTED: '请求停止', RECOVERY: '恢复检查', RETRY: '重新执行', ...statusLabels,
 }

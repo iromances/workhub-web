@@ -84,6 +84,13 @@ export interface AgentRunDetail {
   events: AgentEvent[]
   artifacts: AgentArtifact[]
 }
+export interface AgentRunAcceptance {
+  runId: string
+  checkedAt: string
+  satisfied: boolean
+  items: { kind: AgentArtifactKind; status: 'SATISFIED' | 'MISSING' | 'BLOCKED' | 'UNAVAILABLE'; message: string
+    evidence: { kind: 'ARTIFACT' | 'CHANGE_SET'; id: string; contentHash: string }[] }[]
+}
 export interface AgentOptions {
   providers: { id: number; code: string; name: string; channelType: string; defaultModel: string | null; enabled: boolean }[]
   tools: { code: string; description: string }[]

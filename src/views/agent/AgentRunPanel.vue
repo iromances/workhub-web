@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { cancelAgentRun, replyToAgentRun, retryAgentRun } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
 import type { AgentRun, AgentRunDetail } from '@/types/agent'
+import AgentRunAcceptancePanel from './AgentRunAcceptancePanel.vue'
 import AgentChangesPanel from './AgentChangesPanel.vue'
 import AgentRunReconciliationPanel from './AgentRunReconciliationPanel.vue'
 import { errorText, eventLabels, eventSummary, localTime, prettyPayload, requestKey, statusLabels, statusTone } from './agentPresentation'
@@ -75,6 +76,9 @@ async function sendReply() {
           <span class="run-meta">{{ localTime(artifact.createdAt) }}</span>
           <details><summary>查看产物内容与校验值</summary><pre>{{ prettyPayload(artifact.payloadJson) }}</pre><code>{{ artifact.contentHash }}</code></details>
         </div>
+      </el-tab-pane>
+      <el-tab-pane v-if="auth.hasPermission('agent:task:view')" label="产物验收" name="acceptance">
+        <AgentRunAcceptancePanel v-if="tab === 'acceptance'" :run="run" />
       </el-tab-pane>
       <el-tab-pane v-if="auth.hasPermission('agent:code:use')" label="候选变更" name="changes">
         <AgentChangesPanel v-if="tab === 'changes'" :run-id="run.id" />
