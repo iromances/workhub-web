@@ -39,6 +39,10 @@ interface ChannelForm {
   apiProtocol: string
   apiBaseUrl: string
   apiKey: string
+  cliType: 'CODEX' | 'ZCODE'
+  cliRuntimeCommand: string
+  cliBuiltinConfigPath: string
+  cliPersonalConfigPath: string
   cliCommand: string
   cliWorkingDirectory: string
   connectTimeoutSeconds: number
@@ -121,6 +125,7 @@ const cliCatalog = reactive<CodexCatalogState>({ catalog: null, loading: false, 
 const cliCatalogLoader = createCodexCatalogLoader(cliCatalog, fetchCodexModels,
   error => errorMessage(error, '加载 Codex 模型失败，请重试'))
 let originalCli: ChannelForm | null = null
+const isZCode = computed(() => providerForm.cli.cliType === 'ZCODE')
 const cliModels = computed(() => cliCatalog.catalog?.models ?? [])
 const selectedCliModel = computed(() => cliModels.value.find(item => item.model === providerForm.cli.defaultModel))
 const cliEfforts = computed(() => selectedCliModel.value?.supportedReasoningEfforts ?? [])
@@ -137,7 +142,7 @@ function invalidateCliCatalog() {
 }
 
 function loadCliCatalog(forceRefresh = false) {
-  if (!providerDialogVisible.value || !providerForm.cli.enabled) return
+  if (!providerDialogVisible.value || !providerForm.cli.enabled || isZCode.value) return
   void cliCatalogLoader.load({
     cliCommand: providerForm.cli.cliCommand,
     cliWorkingDirectory: providerForm.cli.cliWorkingDirectory,
@@ -145,9 +150,26 @@ function loadCliCatalog(forceRefresh = false) {
   })
 }
 
+function cliTypeChanged() {
+  invalidateCliCatalog()
+  providerForm.cli.cliCommand = isZCode.value ? 'zcode' : 'codex'
+  providerForm.cli.defaultModel = ''
+  providerForm.cli.defaultReasoningLevel = ''
+  providerForm.cli.defaultSpeedMode = 'STANDARD'
+  loadCliCatalog()
+}
+
 function cliEnabledChanged() {
   invalidateCliCatalog()
   loadCliCatalog()
+}
+
+function validateZCode(channel: ChannelForm) {
+  if (!channel.enabled) return ''
+  if (!/^[^\s/$]+\/[^\s$]+$/.test(channel.defaultModel)) return '请填写 ZCode 的 Provider/Model 标识'
+  if (!channel.defaultReasoningLevel.trim()) return '请填写 ZCode 模型支持的推理档位'
+  if (channel.defaultSpeedMode !== 'STANDARD') return 'ZCode 速度使用标准模式'
+  return ''
 }
 
 function cliModelChanged() {
@@ -170,7 +192,7 @@ const useCaseForm = reactive({
   providerConfigId: null as number | null,
   uiProviderVendor: '',
   uiProviderModelProvider: '',
-  uiProviderChannelType: '',
+  uiProviderSelection: '',
   model: '',
   reasoningLevel: '',
   speedMode: '',
@@ -185,10 +207,22 @@ const useCaseForm = reactive({
   remark: '',
 })
 
+function resolvedCliType(row: AiProviderConfig): 'CODEX' | 'ZCODE' {
+  return row.cliType || (/^zcode(?:$|[.-])/.test((row.cliCommand || '').split('/').pop() || '') ? 'ZCODE' : 'CODEX')
+}
+
+function providerOrder(row: AiProviderConfig) {
+  return row.channelType === 'API' ? 0 : resolvedCliType(row) === 'CODEX' ? 1 : 2
+}
+
 const providerGroups = computed<AiProviderGroup[]>(() => {
   const groups = new Map<string, AiProviderGroup>()
-  providerList.value.forEach((item) => {
-    const key = `${item.vendor || ''}__${item.modelProvider || ''}`
+  const ordered = [...providerList.value].sort((a, b) => providerOrder(a) - providerOrder(b) || a.id - b.id)
+  ordered.forEach((item) => {
+    const baseKey = `${item.vendor || ''}__${item.modelProvider || ''}`
+    const existing = groups.get(baseKey)
+    const occupied = item.channelType === 'API' ? existing?.api : existing?.cli
+    const key = occupied ? `${baseKey}__${item.id}` : baseKey
     if (!groups.has(key)) {
       groups.set(key, {
         key,
@@ -234,10 +268,10 @@ const useCaseChannelOptions = computed(() => {
   const modelProvider = useCaseForm.uiProviderModelProvider
   return providerList.value
     .filter((item) => (item.vendor || '') === vendor && item.modelProvider === modelProvider)
-    .filter((item) => !requiresLocalRepository(useCaseForm.useCaseCode) || item.channelType === 'CLI')
+    .filter((item) => !requiresLocalRepository(useCaseForm.useCaseCode) || (item.channelType === 'CLI' && resolvedCliType(item) !== 'ZCODE'))
     .map((item) => ({
-      value: String(item.channelType || '').toUpperCase(),
-      label: `${channelTypeText(item.channelType)}${item.enabled ? '' : '（停用）'}`,
+      value: String(item.id),
+      label: `${item.channelType === 'CLI' ? resolvedCliType(item) === 'ZCODE' ? 'GLM ZCode CLI' : 'Codex CLI' : channelTypeText(item.channelType)} · ${item.providerName}${item.enabled ? '' : '（停用）'}`,
       disabled: useCaseForm.enabled && !item.enabled,
       order: item.channelType === 'API' ? 1 : 2,
     }))
@@ -250,6 +284,9 @@ const selectedProvider = computed(() => {
   }
   return providerList.value.find((item) => item.id === useCaseForm.providerConfigId) || null
 })
+
+const selectedProviderIsZCode = computed(() => !!selectedProvider.value && selectedProvider.value.channelType === 'CLI' && resolvedCliType(selectedProvider.value) === 'ZCODE')
+const useCaseSpeedOptions = computed(() => speedOptions.filter(item => !selectedProviderIsZCode.value || item.code === 'STANDARD'))
 
 const effectivePreview = computed(() => {
   const provider = selectedProvider.value
@@ -274,6 +311,10 @@ function createChannelForm(channelType: 'API' | 'CLI'): ChannelForm {
     apiProtocol: 'OPENAI_COMPATIBLE',
     apiBaseUrl: '',
     apiKey: '',
+    cliType: 'CODEX',
+    cliRuntimeCommand: '',
+    cliBuiltinConfigPath: '',
+    cliPersonalConfigPath: '',
     cliCommand: channelType === 'CLI' ? 'codex' : '',
     cliWorkingDirectory: '',
     connectTimeoutSeconds: 30,
@@ -391,6 +432,10 @@ function channelFormFromRow(channelType: 'API' | 'CLI', row?: AiProviderConfig):
     apiProtocol: row.apiProtocol || form.apiProtocol,
     apiBaseUrl: row.apiBaseUrl || '',
     apiKey: row.apiKey || '',
+    cliType: resolvedCliType(row),
+    cliRuntimeCommand: row.cliRuntimeCommand || '',
+    cliBuiltinConfigPath: row.cliBuiltinConfigPath || '',
+    cliPersonalConfigPath: row.cliPersonalConfigPath || '',
     cliCommand: row.cliCommand || form.cliCommand,
     cliWorkingDirectory: row.cliWorkingDirectory || '',
     connectTimeoutSeconds: row.connectTimeoutSeconds || form.connectTimeoutSeconds,
@@ -430,7 +475,7 @@ async function saveProviderForm() {
     providerChannelTab.value = 'CLI'
     return
   }
-  const cliValidation = validateCliSelection(providerForm.cli, originalCli, cliCatalog.catalog)
+  const cliValidation = isZCode.value ? validateZCode(providerForm.cli) : validateCliSelection(providerForm.cli, originalCli, cliCatalog.catalog)
   if (cliValidation) {
     ElMessage.warning(cliValidation)
     providerChannelTab.value = 'CLI'
@@ -512,6 +557,10 @@ function buildProviderPayload(channel: ChannelForm, label?: string): AiProviderC
     apiProtocol: channel.apiProtocol || undefined,
     apiBaseUrl: channel.apiBaseUrl || undefined,
     apiKey: channel.apiKey || undefined,
+    cliType: channel.channelType === 'CLI' ? channel.cliType : undefined,
+    cliRuntimeCommand: channel.cliRuntimeCommand || undefined,
+    cliBuiltinConfigPath: channel.cliBuiltinConfigPath || undefined,
+    cliPersonalConfigPath: channel.cliPersonalConfigPath || undefined,
     cliCommand: channel.cliCommand || undefined,
     cliWorkingDirectory: channel.cliWorkingDirectory || undefined,
     connectTimeoutSeconds: channel.connectTimeoutSeconds,
@@ -540,6 +589,8 @@ function validateProviderConnection(channel: ChannelForm): string {
     }
   } else if (!channel.cliCommand) {
     return '请先填写 CLI 命令'
+  } else if (channel.cliType === 'ZCODE') {
+    return validateZCode(channel)
   }
   return ''
 }
@@ -587,7 +638,7 @@ function resetUseCaseForm() {
   useCaseForm.providerConfigId = null
   useCaseForm.uiProviderVendor = ''
   useCaseForm.uiProviderModelProvider = ''
-  useCaseForm.uiProviderChannelType = ''
+  useCaseForm.uiProviderSelection = ''
   useCaseForm.model = ''
   useCaseForm.reasoningLevel = ''
   useCaseForm.speedMode = ''
@@ -614,6 +665,13 @@ async function saveUseCaseForm() {
   if (!useCaseForm.promptTemplate.trim()) {
     ElMessage.warning('请填写提示词模板')
     return
+  }
+  if (selectedProviderIsZCode.value) {
+    const validation = validateZCode({ ...createChannelForm('CLI'), enabled: true,
+      defaultModel: useCaseForm.model || selectedProvider.value?.defaultModel || '',
+      defaultReasoningLevel: useCaseForm.reasoningLevel || selectedProvider.value?.defaultReasoningLevel || '',
+      defaultSpeedMode: useCaseForm.speedMode || selectedProvider.value?.defaultSpeedMode || '' })
+    if (validation) { ElMessage.warning(validation); return }
   }
   const payload: AiUseCaseConfigRequest = {
     id: useCaseForm.id,
@@ -661,8 +719,8 @@ function handleUseCaseProviderParamChange(changedField: 'vendor' | 'modelProvide
   }
   if (changedField === 'vendor' || changedField === 'modelProvider') {
     const channels = useCaseChannelOptions.value.filter((item) => useCaseForm.enabled ? !item.disabled : true)
-    if (!channels.find((item) => item.value === useCaseForm.uiProviderChannelType)) {
-      useCaseForm.uiProviderChannelType = channels[0]?.value || ''
+    if (!channels.find((item) => item.value === useCaseForm.uiProviderSelection)) {
+      useCaseForm.uiProviderSelection = channels[0]?.value || ''
     }
   }
   useCaseForm.providerConfigId = resolveUseCaseProviderConfigId()
@@ -675,7 +733,7 @@ function syncUseCaseProviderFields() {
   }
   useCaseForm.uiProviderVendor = provider.vendor || ''
   useCaseForm.uiProviderModelProvider = provider.modelProvider || ''
-  useCaseForm.uiProviderChannelType = String(provider.channelType || '').toUpperCase()
+  useCaseForm.uiProviderSelection = String(provider.id)
 }
 
 function resolveUseCaseProviderConfigId() {
@@ -683,7 +741,8 @@ function resolveUseCaseProviderConfigId() {
   const provider = providerList.value.find((item) => {
     return (item.vendor || '') === vendor &&
       item.modelProvider === useCaseForm.uiProviderModelProvider &&
-      String(item.channelType || '').toUpperCase() === useCaseForm.uiProviderChannelType &&
+      String(item.id) === useCaseForm.uiProviderSelection &&
+      (!requiresLocalRepository(useCaseForm.useCaseCode) || (item.channelType === 'CLI' && resolvedCliType(item) === 'CODEX')) &&
       (item.enabled || !useCaseForm.enabled)
   })
   return provider?.id || null
@@ -694,6 +753,7 @@ function buildProviderCode(channelType: string) {
     providerForm.vendor || 'DIRECT',
     providerForm.modelProvider || 'MODEL',
     channelType,
+    ...(channelType === 'CLI' && isZCode.value ? ['ZCODE'] : []),
   ].join('-').toLowerCase()
 }
 
@@ -934,6 +994,7 @@ onMounted(async () => {
             <template #default="{ row }">
               <div class="main-text">
                 <el-tag :type="row.cli?.enabled ? 'success' : 'info'">{{ row.cli?.enabled ? '启用' : '停用' }}</el-tag>
+                <el-tag v-if="row.cli?.cliType === 'ZCODE'" size="small">ZCode</el-tag>
                 <span class="inline-meta">{{ row.cli?.cliCommand || '-' }}</span>
               </div>
               <div class="sub-text">{{ row.cli?.cliWorkingDirectory || '-' }}</div>
@@ -1046,7 +1107,13 @@ onMounted(async () => {
             <el-switch v-model="providerForm.cli.enabled" @change="cliEnabledChanged" />
           </div>
           <div v-if="providerForm.cli.enabled" class="channel-body">
-            <div class="channel-head">
+            <el-form-item label="CLI 类型">
+              <el-select v-model="providerForm.cli.cliType" @change="cliTypeChanged" style="width: 100%">
+                <el-option label="Codex" value="CODEX" /><el-option label="GLM ZCode" value="ZCODE" />
+              </el-select>
+            </el-form-item>
+            <el-alert v-if="isZCode" title="使用服务端已有的 ZCode。任务运行使用独立工作目录；模型标识和推理档位以 ZCode 配置为准。" type="info" :closable="false" />
+            <div v-if="!isZCode" class="channel-head">
               <span class="sub-text" v-if="cliCatalog.loading">正在读取 Codex 模型列表…</span>
               <span class="sub-text" v-else-if="cliCatalog.catalog">
                 {{ cliCatalog.catalog.cached ? '使用最近查询结果' : '模型列表已更新' }} ·
@@ -1055,20 +1122,26 @@ onMounted(async () => {
               <span class="sub-text" v-else>模型与推理强度来自运行服务的 Codex 环境</span>
               <el-button :loading="cliCatalog.loading" @click="loadCliCatalog(true)">{{ cliCatalog.error ? '重试' : '刷新模型' }}</el-button>
             </div>
-            <el-alert v-if="cliCatalog.error" :title="cliCatalog.error" type="error" :closable="false" show-icon />
-            <el-alert v-else-if="cliCatalog.catalog && (cliModelMissing || cliEffortMissing)"
+            <el-alert v-if="!isZCode && cliCatalog.error" :title="cliCatalog.error" type="error" :closable="false" show-icon />
+            <el-alert v-else-if="!isZCode && cliCatalog.catalog && (cliModelMissing || cliEffortMissing)"
               title="原配置的模型或推理强度当前不可选，已保留原值，请核对后选择。" type="warning" :closable="false" show-icon />
             <div class="form-grid two-grid">
               <el-form-item label="CLI命令">
-                <el-input v-model="providerForm.cli.cliCommand" placeholder="例如 codex" @input="invalidateCliCatalog" @change="loadCliCatalog()" />
+                <el-input v-model="providerForm.cli.cliCommand" :placeholder="isZCode ? 'zcode 或已安装 zcode.cjs 的绝对路径' : '例如 codex'" @input="invalidateCliCatalog" @change="loadCliCatalog()" />
               </el-form-item>
-              <el-form-item label="CLI工作目录">
+              <el-form-item v-if="!isZCode" label="CLI工作目录">
                 <el-input v-model="providerForm.cli.cliWorkingDirectory" @input="invalidateCliCatalog" @change="loadCliCatalog()" />
               </el-form-item>
             </div>
+            <div v-if="isZCode" class="form-grid two-grid">
+              <el-form-item label="Node 程序（CJS 分发）"><el-input v-model="providerForm.cli.cliRuntimeCommand" placeholder="留空使用 node；填写已有兼容版本的程序路径" /></el-form-item>
+              <el-form-item label="内置 Provider 定义"><el-input v-model="providerForm.cli.cliBuiltinConfigPath" placeholder="已安装分发包中的 zcode-builtin.json；Mac App CJS 可自动定位" /></el-form-item>
+              <el-form-item label="个人 Provider 配置"><el-input v-model="providerForm.cli.cliPersonalConfigPath" placeholder="留空使用服务用户 ~/.zcode/v2/provider_config.json" /></el-form-item>
+            </div>
             <div class="form-grid three-grid">
               <el-form-item label="默认模型">
-                <el-select v-model="providerForm.cli.defaultModel" filterable style="width: 100%"
+                <el-input v-if="isZCode" v-model="providerForm.cli.defaultModel" placeholder="Provider/Model（来自 ZCode 配置）" />
+                <el-select v-else v-model="providerForm.cli.defaultModel" filterable style="width: 100%"
                   :loading="cliCatalog.loading" :disabled="!cliCatalog.catalog || cliCatalog.loading" @change="cliModelChanged">
                   <el-option v-if="cliModelMissing" :value="providerForm.cli.defaultModel"
                     :label="providerForm.cli.defaultModel + (cliCatalog.catalog ? '（当前不可选）' : '（原配置）')" disabled />
@@ -1076,7 +1149,8 @@ onMounted(async () => {
                 </el-select>
               </el-form-item>
               <el-form-item label="默认推理强度">
-                <el-select v-model="cliReasoningValue" filterable style="width: 100%"
+                <el-input v-if="isZCode" v-model="providerForm.cli.defaultReasoningLevel" placeholder="模型支持的原始档位，如 enabled / disabled" />
+                <el-select v-else v-model="cliReasoningValue" filterable style="width: 100%"
                   :disabled="!selectedCliModel || cliCatalog.loading">
                   <el-option v-if="cliEffortMissing" :value="providerForm.cli.defaultReasoningLevel"
                     :label="providerForm.cli.defaultReasoningLevel + (cliCatalog.catalog ? '（当前不可选）' : '（原配置）')" disabled />
@@ -1085,7 +1159,7 @@ onMounted(async () => {
                 </el-select>
               </el-form-item>
               <el-form-item label="默认速度">
-                <el-select v-model="providerForm.cli.defaultSpeedMode" filterable style="width: 100%">
+                <el-select v-model="providerForm.cli.defaultSpeedMode" :disabled="isZCode" filterable style="width: 100%">
                   <el-option v-for="item in speedOptions" :key="item.code" :label="item.label" :value="item.code" />
                 </el-select>
               </el-form-item>
@@ -1182,7 +1256,7 @@ onMounted(async () => {
                 </el-select>
               </el-form-item>
               <el-form-item label="通道">
-                <el-select v-model="useCaseForm.uiProviderChannelType" style="width: 100%" @change="handleUseCaseProviderParamChange('channel')">
+                <el-select v-model="useCaseForm.uiProviderSelection" style="width: 100%" @change="handleUseCaseProviderParamChange('channel')">
                   <el-option v-for="item in useCaseChannelOptions" :key="item.value" :label="item.label" :value="item.value" :disabled="item.disabled" />
                 </el-select>
               </el-form-item>
@@ -1194,6 +1268,7 @@ onMounted(async () => {
               <span class="sub-text">默认：{{ selectedProvider.defaultModel || '-' }} / {{ reasoningText(selectedProvider.defaultReasoningLevel) }} / {{ speedText(selectedProvider.defaultSpeedMode) }} / {{ selectedProvider.callTimeoutSeconds || '-' }}s</span>
             </div>
             <div v-else class="unmatched-provider">当前参数没有匹配到已启用的接入配置，请先在“接入配置”中维护对应组合和通道。</div>
+            <el-alert v-if="selectedProviderIsZCode" title="当前 ZCode 接入支持文本任务；需要处理图片时，请选择支持图片的接入。" type="info" :closable="false" />
             <div class="section-subtitle">任务级覆盖（可选）</div>
             <el-form-item label="模型覆盖">
               <el-select v-model="useCaseForm.model" clearable filterable allow-create placeholder="留空继承通道默认模型" style="width: 100%">
@@ -1202,13 +1277,14 @@ onMounted(async () => {
             </el-form-item>
             <div class="form-grid three-grid">
               <el-form-item label="推理强度覆盖">
-                <el-select v-model="useCaseForm.reasoningLevel" clearable filterable placeholder="继承通道默认值" style="width: 100%">
+                <el-input v-if="selectedProviderIsZCode" v-model="useCaseForm.reasoningLevel" clearable placeholder="继承默认值，或填写模型支持的原始档位" />
+                <el-select v-else v-model="useCaseForm.reasoningLevel" clearable filterable placeholder="继承通道默认值" style="width: 100%">
                   <el-option v-for="item in reasoningOptions" :key="item.code" :label="item.label" :value="item.code" />
                 </el-select>
               </el-form-item>
               <el-form-item label="速度覆盖">
                 <el-select v-model="useCaseForm.speedMode" clearable filterable placeholder="继承通道默认值" style="width: 100%">
-                  <el-option v-for="item in speedOptions" :key="item.code" :label="item.label" :value="item.code" />
+                  <el-option v-for="item in useCaseSpeedOptions" :key="item.code" :label="item.label" :value="item.code" />
                 </el-select>
               </el-form-item>
               <el-form-item label="总调用超时覆盖">

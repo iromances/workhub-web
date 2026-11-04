@@ -24,6 +24,12 @@ const router = createRouter({
           meta: { title: '工作台', activeMenu: '/dashboard', permission: 'dashboard:view' },
         },
         {
+          path: 'agents',
+          name: 'agent-workbench',
+          component: () => import('@/views/agent/AgentWorkbenchView.vue'),
+          meta: { title: 'Agent 工作台', activeMenu: '/agents', permission: 'agent:view' },
+        },
+        {
           path: 'projects',
           redirect: '/projects/list',
         },

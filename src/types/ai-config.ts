@@ -11,6 +11,10 @@ export interface AiProviderConfig {
   apiProtocol?: string
   apiBaseUrl?: string
   apiKey?: string
+  cliType?: 'CODEX' | 'ZCODE'
+  cliRuntimeCommand?: string
+  cliBuiltinConfigPath?: string
+  cliPersonalConfigPath?: string
   cliCommand?: string
   cliWorkingDirectory?: string
   connectTimeoutSeconds?: number
@@ -35,6 +39,10 @@ export interface AiProviderConfigRequest {
   apiProtocol?: string
   apiBaseUrl?: string
   apiKey?: string
+  cliType?: 'CODEX' | 'ZCODE'
+  cliRuntimeCommand?: string
+  cliBuiltinConfigPath?: string
+  cliPersonalConfigPath?: string
   cliCommand?: string
   cliWorkingDirectory?: string
   connectTimeoutSeconds?: number

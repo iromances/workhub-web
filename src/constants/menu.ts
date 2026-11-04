@@ -2,6 +2,7 @@ import type { MenuItem } from '@/types/menu'
 
 export const menuItems: MenuItem[] = [
   { key: 'dashboard', label: '工作台', path: '/dashboard', permission: 'dashboard:view' },
+  { key: 'agents', label: 'Agent 工作台', path: '/agents', permission: 'agent:view' },
   { key: 'demands', label: '需求管理', path: '/demands', permission: 'intake:record:view' },
   {
     key: 'ops',
