@@ -36,3 +36,34 @@ export interface AgentReleaseDetail extends AgentReleasePlan {
 export interface AgentReleaseReviewRequest {
   requestKey: string; expectedVersion: number; snapshotHash: string; decision: 'APPROVED' | 'REJECTED'; comment: string
 }
+
+
+export interface AgentVerificationFact {
+  observationId: string; contentHash: string; pointer: string; sourceKey: string; eventKey: string
+  observedAt: string; dataAt: string | null; problems: string[]; coverageFrom?: string | null; coverageThrough?: string | null
+}
+export interface AgentVerificationProgress {
+  checkId: string; assessment: 'PASS' | 'FAIL' | 'INCONCLUSIVE'; reason: string; reasonTruncated?: boolean
+  historicalDataPending: boolean; distinctSamples: number; observedSeconds: number
+  windowStart: string | null; windowEnd: string | null; constraints: string[]; latestSampleId: string | null; evidenceRoot: string
+}
+export interface AgentVerificationView {
+  id: string; planId: string; runId: string; changeSetId: string; stage: string; manifestHash: string; approvedSnapshotHash: string
+  status: 'OBSERVING' | 'PASSED' | 'FAILED'; version: number; constraintsCheckedAt: string; currentConstraintsSatisfied: boolean
+  deployedAt: string; verificationPlan: AgentReleaseVerificationPlan; nextCheckAt: string | null; artifactId: string | null
+  checks: AgentVerificationProgress[]; caseClosed: boolean
+  conclusion: null | { assessment: 'PASS' | 'FAIL' | 'INCONCLUSIVE'; reason: string; historicalDataPending: boolean
+    conclusionSource: 'AI_ASSESSMENT'; platformConstraintsSatisfied: boolean; checks: AgentVerificationProgress[]; recordedAt: string }
+}
+export interface AgentVerificationSample {
+  id: string; checkId: string; sampleOrder: number; assessment: 'PASS' | 'FAIL' | 'INCONCLUSIVE'; reason: string
+  historicalDataPending: boolean; createdAt: string; evidence: AgentVerificationFact[]
+}
+export interface AgentVerificationSamplePage {
+  planId: string; verificationId: string; checkId: string; afterOrder: number; throughOrder: number; pageSize: number
+  items: AgentVerificationSample[]; hasMore: boolean; nextAfterOrder: number
+}
+export interface AgentVerificationEvidenceView {
+  planId: string; verificationId: string; sampleId: string; checkId: string; observationId: string; pointer: string
+  contentHash: string; toolCode: string; sourceType: string; scope: AgentScope; observedAt: string; payload: unknown
+}

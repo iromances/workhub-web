@@ -1,18 +1,8 @@
 <script setup lang="ts">
 import type { AgentReleaseVerificationPlan } from '@/types/agentRelease'
+import { monitoringTools as tools, duration } from './agentVerificationPresentation'
 
 defineProps<{ plan?: AgentReleaseVerificationPlan | null }>()
-const tools: Record<string, string> = {
-  'monitor.business.status': '业务监测状态', 'monitor.business.detail': '业务运行详情',
-  'monitor.accounting.status': '账务监测状态', 'monitor.accounting.detail': '账务规则结果',
-  'monitor.accounting.runs': '账务历史运行', 'monitor.system.alerts': '系统预警', 'workhub.logs': '运行日志',
-}
-function duration(seconds: number) {
-  if (seconds % 86400 === 0) return `${seconds / 86400} 天`
-  if (seconds % 3600 === 0) return `${seconds / 3600} 小时`
-  if (seconds % 60 === 0) return `${seconds / 60} 分钟`
-  return `${seconds} 秒`
-}
 </script>
 
 <template>

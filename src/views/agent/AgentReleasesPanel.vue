@@ -5,6 +5,7 @@ import { fetchAgentReleasePlan, fetchAgentReleasePlans, reviewAgentReleasePlan, 
 import type { AgentReleaseDetail, AgentReleasePlan, AgentReleaseReviewRequest } from '@/types/agentRelease'
 import { useAuthStore } from '@/stores/auth'
 import AgentReleaseVerificationPanel from './AgentReleaseVerificationPanel.vue'
+import AgentVerificationResultsPanel from './AgentVerificationResultsPanel.vue'
 import { errorText, localTime, prettyPayload, requestKey } from './agentPresentation'
 
 const props = defineProps<{ changeSetId: string }>()
@@ -31,7 +32,7 @@ const canApprove = computed(() => canReview.value && isWaiting.value && detail.v
 const stage = (value: string) => value === 'PROD_DEPLOY' ? '生产上线' : '测试发布'
 const labels: Record<string, string> = {
   WAITING_REVIEW: '等待人工审核', APPROVED: '已批准，等待执行', EXECUTING: '发布执行中', NEEDS_ATTENTION: '需核对原请求',
-  STOPPING: '等待在途请求结束', SUCCEEDED: '部署完成，待业务复查', FAILED: '发布失败', CANCELLED: '已停止后续发布', REJECTED: '已驳回',
+  STOPPING: '等待在途请求结束', SUCCEEDED: '部署完成', FAILED: '发布失败', CANCELLED: '已停止后续发布', REJECTED: '已驳回',
   PREPARED: '等待前置步骤或调度', SUBMITTING: '已登记发送意图', QUEUED: 'Jenkins 排队中', BUILDING: 'Jenkins 执行中',
   DEPLOYING: '等待实际部署回执', UNKNOWN: '原请求结果待核对', ABORTED: 'Jenkins 已取消', BLOCKED: '未发出，已阻止',
 }
@@ -139,13 +140,14 @@ onActivated(() => { if (!active) { active = true; void load() } })
       <template v-if="detail">
         <div class="heading"><h4>{{ stage(detail.stage) }} · 候选第 {{ detail.snapshot.change.revision }} 版</h4><el-tag :type="tone(detail.status)">{{ labels[detail.status] || detail.status }}</el-tag></div>
         <p><strong>目标环境：</strong>{{ targets }}</p>
-        <el-alert v-if="detail.status === 'SUCCEEDED'" title="全部 Job 已取得部署成功回执，业务效果尚待复查。" type="info" :closable="false" show-icon />
+        <el-alert v-if="detail.status === 'SUCCEEDED'" title="全部 Job 已取得部署成功回执，业务效果请查看下方复查结果。" type="info" :closable="false" show-icon />
         <el-alert v-else-if="!detail.current" title="当前材料已失效或不可用。保留本次审核及在途发布历史，请重新准备材料后审核。" type="warning" :closable="false" show-icon />
         <ul v-if="isWaiting && detail.blockers.length" class="blockers"><li v-for="item in detail.blockers" :key="item">{{ blockers[item] || item }}</li></ul>
         <h4>本次审核的准确提交</h4>
         <div v-for="repo in detail.snapshot.change.manifest.repositories" :key="repo.repositoryId" class="commit"><strong>{{ repo.repositoryName }}</strong><code>{{ repo.resultSha }}</code></div>
         <details><summary>查看本次冻结的方案、验收及回退说明</summary><dl><template v-for="(label, key) in { summary: '变更说明', impact: '影响范围', acceptance: '验收建议', rollback: '回退建议' }" :key="key"><dt>{{ label }}</dt><dd>{{ detail.snapshot.change.manifest.plan[key] }}</dd></template></dl></details>
         <AgentReleaseVerificationPanel :plan="detail.snapshot.verificationPlan" />
+        <AgentVerificationResultsPanel :key="detail.id" :plan="detail" />
         <h4>Job 顺序与发布进度</h4>
         <div v-for="step in stepRows" :key="step.requestId" class="step">
           <div class="heading"><strong>{{ step.order }}. {{ step.binding.binding.name }}</strong><el-tag :type="tone(step.deployment?.status || 'PREPARED')">{{ step.deployment ? labels[step.deployment.status] || step.deployment.status : '尚未登记执行' }}</el-tag></div>
