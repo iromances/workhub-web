@@ -122,6 +122,85 @@ export interface XxlJobLogPage {
   logs: XxlJobFailedJob[]
 }
 
+export interface MqDatabaseStats {
+  databaseName: string
+  sendTotalCount: number
+  sendSuccessCount: number
+  sendFailedCount: number
+  sendPendingCount: number
+  receiveTotalCount: number
+  receiveSuccessCount: number
+  receiveFailedCount: number
+  latestActivityAt: string | null
+  errorMessage: string | null
+}
+
+export type MqLogType = 'SENDER' | 'RECEIVER'
+
+export type MqFailureType = 'SEND_FAILED' | 'SEND_STUCK' | 'RECEIVE_ACK_FAILED' | 'RECEIVE_BUSINESS_FAILED'
+
+export interface MqMessage {
+  databaseName: string
+  logType: MqLogType
+  logId: number
+  messageId: string
+  exchange: string
+  routingKey: string
+  queue: string
+  status: number | null
+  failureType: MqFailureType
+  failureTypeName: string
+  retryCount: number | null
+  autoRetry: boolean | null
+  dealBusinessSuccess: boolean | null
+  occurredAt: string
+  createTime: string
+  errorMsg: string
+}
+
+export interface MqDashboard {
+  id: number
+  monitorKey: string
+  businessLineCode: string
+  environmentCode: string
+  name: string
+  status: string
+  message: string
+  checkedAt: string | null
+  databaseCount: number
+  sendTotalCount: number
+  sendSuccessCount: number
+  sendFailedCount: number
+  sendPendingCount: number
+  receiveTotalCount: number
+  receiveSuccessCount: number
+  receiveFailedCount: number
+  databaseStats: MqDatabaseStats[]
+  failedMessageCount: number
+  messagePage: number
+  messagePageSize: number
+  messages: MqMessage[]
+  mqTopic: string | null
+  mqConsumerGroup: string | null
+  mqLagThreshold: number | null
+  remark: string | null
+}
+
+export interface MqMessagePage {
+  id: number
+  monitorKey: string
+  businessLineCode: string
+  environmentCode: string
+  name: string
+  status: string
+  message: string
+  checkedAt: string | null
+  total: number
+  page: number
+  pageSize: number
+  messages: MqMessage[]
+}
+
 export interface SystemAlertSubsystem {
   id: number
   businessLineCode: string

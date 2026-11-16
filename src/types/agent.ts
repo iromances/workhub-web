@@ -5,7 +5,6 @@ export interface AgentConfiguration {
   providerConfigId: number
   model: string | null
   scopes: AgentScope[]
-  toolCodes: string[]
   maxSteps: number
   maxRunSeconds: number
   maxConcurrentRuns: number
@@ -20,6 +19,7 @@ export interface AgentDefinition {
   updatedAt: string
 }
 export type AgentArtifactKind = 'REPORT' | 'CHANGE_SET' | 'TEST_REPORT' | 'DEPLOYMENT' | 'VERIFICATION'
+export type AgentAnalysisScope = 'FULL' | 'INCREMENTAL'
 export interface AgentTaskSpecification {
   objective: string
   context: string | null
@@ -27,7 +27,7 @@ export interface AgentTaskSpecification {
   expectedArtifacts: AgentArtifactKind[]
   completionTargets: AgentScope[]
   scopes: AgentScope[]
-  toolCodes: string[]
+  analysisScope?: AgentAnalysisScope
 }
 export interface AgentSchedule {
   expectedVersion: number | null
@@ -95,7 +95,6 @@ export interface AgentRunAcceptance {
 }
 export interface AgentOptions {
   providers: { id: number; code: string; name: string; channelType: string; defaultModel: string | null; enabled: boolean }[]
-  tools: { code: string; description: string }[]
   scopes: { businessLineCode: string; businessLineName: string; environments: string[] }[]
 }
 
@@ -118,3 +117,17 @@ export interface AgentRunReconciliationRequest {
   nextAction: AgentReconciliationAction; decisions: AgentReconciliationDecision[]
 }
 export interface AgentRunReconciliationResult { runId: string; status: string; version: number; eventKey: string }
+
+export type AgentIssueDomain = 'SYSTEM_ALERT' | 'BUSINESS_MONITOR' | 'ACCOUNTING'
+export interface AgentIssue {
+  id: string; taskId: string; agentId: string; businessLineCode: string; environmentCode: string
+  domain: AgentIssueDomain; signature: string; title: string; severity: 'P0' | 'P1' | 'P2'; status: string
+  analysis: { codeLocation: string; repro: string; rootCause: string; impactVerification: string; fixDirection: string; repos: { system: string; repository: string; path: string }[] } | null
+  evidence: { summary: string; references: string[]; window: string } | null
+  fix: { branch: string; repos: { system: string; repository: string; path: string }[]; commit: string; mrUrl: string; diffSummary: string; fixRunId: string } | null
+  review: { reviewer: string; decision: string; note: string; reviewedAt: string } | null
+  deploy: { testStatus: string; testReceipt: string; testedAt: string; prodStatus: string; prodReceipt: string; prodAt: string } | null
+  firstRunId: string; lastRunId: string; firstSeenAt: string; lastSeenAt: string
+  occurrenceCount: number; unseenRounds: number; reopenCount: number; version: number
+  createdAt: string; updatedAt: string
+}

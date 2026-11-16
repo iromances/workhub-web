@@ -60,3 +60,13 @@ async function testLoading() {
   console.log(`Codex 模型表单：${checks} 项检查通过`)
 }
 void testLoading()
+
+const zcodeSaved = { ...saved, cliType: 'ZCODE', cliRuntimeCommand: '/node', cliBuiltinConfigPath: '/builtin.json', cliPersonalConfigPath: '/personal.json' }
+equal(validateCliSelection(zcodeSaved, zcodeSaved, null), '', 'ZCode 查询失败保留未变更的原配置')
+for (const field of ['cliType', 'cliRuntimeCommand', 'cliBuiltinConfigPath', 'cliPersonalConfigPath'] as const) {
+  equal(!!validateCliSelection({ ...zcodeSaved, [field]: 'changed' }, zcodeSaved, null), true, `ZCode ${field} 改变必须重新查询`)
+}
+const glm = { ...model, model: 'provider/glm-5.3', defaultReasoningEffort: 'max', supportedReasoningEfforts: [
+  { reasoningEffort: 'low', description: '' }, { reasoningEffort: 'high', description: '' }, { reasoningEffort: 'max', description: '' }] }
+equal(reasoningAfterModelChange(glm, 'low'), 'low', 'GLM 切换保留支持的 low')
+equal(reasoningAfterModelChange(glm, 'ultra'), 'max', 'GLM 切换使用目录默认 max')

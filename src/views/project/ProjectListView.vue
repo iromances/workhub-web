@@ -20,6 +20,7 @@ import {
   updateProjectGroup,
   updateProjectInvolvedSystem,
 } from '@/api/project'
+import { supportedEnvironmentPresets, toEnvironmentOptions } from '@/constants/environment'
 import { useAuthStore } from '@/stores/auth'
 import type { ProjectGroup, ProjectGroupEndpointType, ProjectInvolvedSystem, ProjectSummary } from '@/types/work-item'
 
@@ -29,6 +30,9 @@ interface BusinessLineAccessConfigForm {
   endpointName: string
   endpointUrl: string
   pathPrefix: string
+  loginUsername: string
+  loginPassword: string
+  loginPasswordConfigured: boolean
   enabled: boolean
 }
 
@@ -79,13 +83,11 @@ const groupForm = reactive({
   groupName: '',
   gitlabGroupName: '',
   description: '',
+  supportedEnvironments: [] as string[],
   accessConfigs: [] as BusinessLineAccessConfigForm[],
 })
-const environmentOptions = [
-  { label: '开发环境', value: 'dev' },
-  { label: '测试环境', value: 'test' },
-  { label: '生产环境', value: 'prod' },
-]
+const groupEnvironmentOptions = computed(() => toEnvironmentOptions(groupForm.supportedEnvironments))
+const supportedEnvironmentOptions = toEnvironmentOptions(supportedEnvironmentPresets)
 const endpointTypeOptions: Array<{ label: string; value: ProjectGroupEndpointType }> = [
   { label: '运营端', value: 'OPERATIONS' },
   { label: '客户端', value: 'CLIENT' },
@@ -255,6 +257,7 @@ function openGroupDialog() {
   groupForm.groupName = ''
   groupForm.gitlabGroupName = ''
   groupForm.description = ''
+  groupForm.supportedEnvironments = ['DEV', 'TEST', 'PROD']
   groupForm.accessConfigs = []
   groupDialogVisible.value = true
 }
@@ -264,12 +267,16 @@ function openGroupEditDialog(group: ProjectGroup) {
   groupForm.groupName = group.groupName
   groupForm.gitlabGroupName = group.gitlabGroupName || ''
   groupForm.description = group.description || ''
+  groupForm.supportedEnvironments = [...(group.supportedEnvironments || [])]
   groupForm.accessConfigs = group.accessConfigs.map((item) => ({
     environmentCode: item.environmentCode,
     endpointType: item.endpointType,
     endpointName: item.endpointName,
     endpointUrl: item.endpointUrl,
     pathPrefix: item.pathPrefix || '',
+    loginUsername: item.loginUsername || '',
+    loginPassword: '',
+    loginPasswordConfigured: Boolean(item.loginPasswordConfigured),
     enabled: item.enabled,
   }))
   groupDialogVisible.value = true
@@ -281,11 +288,14 @@ function defaultEndpointName(endpointType: ProjectGroupEndpointType) {
 
 function addBusinessLineAccessConfig() {
   groupForm.accessConfigs.push({
-    environmentCode: 'test',
+    environmentCode: groupForm.supportedEnvironments[0] || '',
     endpointType: 'OPERATIONS',
     endpointName: '运营端',
     endpointUrl: '',
     pathPrefix: '',
+    loginUsername: '',
+    loginPassword: '',
+    loginPasswordConfigured: false,
     enabled: true,
   })
 }
@@ -439,9 +449,24 @@ async function handleDeleteProject(project: ProjectSummary) {
   }
 }
 
+function normalizeSupportedEnvironmentCodes(codes: string[]) {
+  const normalized: string[] = []
+  for (const code of codes) {
+    const value = code.trim().toUpperCase()
+    if (value && !normalized.includes(value)) {
+      normalized.push(value)
+    }
+  }
+  groupForm.supportedEnvironments = normalized
+}
+
 async function submitGroupCreate() {
   if (!groupForm.groupName.trim()) {
     ElMessage.warning('请填写业务线名称')
+    return
+  }
+  if (!groupForm.supportedEnvironments.length) {
+    ElMessage.warning('请至少配置一个支持环境')
     return
   }
   const invalidAccessConfig = groupForm.accessConfigs.find((item) => (
@@ -453,6 +478,10 @@ async function submitGroupCreate() {
     ElMessage.warning('请完整填写访问地址的环境、名称和 URL')
     return
   }
+  if (groupForm.accessConfigs.some((item) => !groupForm.supportedEnvironments.includes(item.environmentCode.trim().toUpperCase()))) {
+    ElMessage.warning('访问地址的环境必须在支持环境列表内，请调整后再保存')
+    return
+  }
   submitting.value = true
   try {
     const payload = {
@@ -460,12 +489,15 @@ async function submitGroupCreate() {
       gitlabGroupName: groupForm.gitlabGroupName.trim() || undefined,
       description: groupForm.description.trim() || undefined,
       enabled: true,
+      supportedEnvironments: groupForm.supportedEnvironments,
       accessConfigs: groupForm.accessConfigs.map((item, index) => ({
-        environmentCode: item.environmentCode.trim(),
+        environmentCode: item.environmentCode.trim().toUpperCase(),
         endpointType: item.endpointType,
         endpointName: item.endpointName.trim() || defaultEndpointName(item.endpointType),
         endpointUrl: item.endpointUrl.trim(),
         pathPrefix: item.endpointType === 'GATEWAY' ? item.pathPrefix.trim() || null : null,
+        loginUsername: item.loginUsername.trim() || null,
+        loginPassword: item.loginPassword.trim() || undefined,
         sortOrder: index * 10,
         enabled: item.enabled,
       })),
@@ -705,10 +737,7 @@ onMounted(async () => {
   </el-dialog>
 
   <div v-if="currentSection === 'business-lines'" class="page-card table-card project-group-card">
-    <div class="section-header">
-      <div>
-        <p class="section-desc">维护业务线与 GitLab 组名，AI 任务评估会用它辅助匹配代码仓库。</p>
-      </div>
+    <div class="dialog-toolbar">
       <el-button v-if="canCreateBusinessLine" @click="openGroupDialog">新增业务线</el-button>
     </div>
     <el-table :data="businessLines">
@@ -773,16 +802,46 @@ onMounted(async () => {
     </el-table>
   </div>
 
-  <el-dialog v-model="groupDialogVisible" :title="editingGroupId ? '编辑业务线' : '新增业务线'" width="860px">
+  <el-dialog
+    v-model="groupDialogVisible"
+    :title="editingGroupId ? '编辑业务线' : '新增业务线'"
+    width="960px"
+    class="business-line-dialog"
+  >
     <el-form label-position="top">
-      <el-form-item label="业务线名称">
-        <el-input v-model="groupForm.groupName" placeholder="例如 数智金融" />
-      </el-form-item>
-      <el-form-item label="GitLab 组名">
-        <el-input v-model="groupForm.gitlabGroupName" placeholder="例如 digital-finance 或 group/subgroup" />
-      </el-form-item>
+      <el-row :gutter="16">
+        <el-col :span="12">
+          <el-form-item label="业务线名称">
+            <el-input v-model="groupForm.groupName" placeholder="例如 数智金融" />
+          </el-form-item>
+        </el-col>
+        <el-col :span="12">
+          <el-form-item label="GitLab 组名">
+            <el-input v-model="groupForm.gitlabGroupName" placeholder="例如 digital-finance 或 group/subgroup" />
+          </el-form-item>
+        </el-col>
+      </el-row>
       <el-form-item label="说明">
-        <el-input v-model="groupForm.description" type="textarea" :rows="3" placeholder="可选" />
+        <el-input v-model="groupForm.description" type="textarea" :rows="2" placeholder="可选" />
+      </el-form-item>
+      <el-form-item label="支持环境">
+        <el-select
+          v-model="groupForm.supportedEnvironments"
+          multiple
+          filterable
+          allow-create
+          default-first-option
+          placeholder="选择或输入大写环境编码，如 DEV、FAT"
+          style="width: 100%"
+          @change="normalizeSupportedEnvironmentCodes"
+        >
+          <el-option
+            v-for="option in supportedEnvironmentOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
       </el-form-item>
       <div class="access-config-section">
         <div class="access-config-header">
@@ -792,25 +851,74 @@ onMounted(async () => {
           </div>
           <el-button @click="addBusinessLineAccessConfig">新增地址</el-button>
         </div>
-        <el-empty v-if="!groupForm.accessConfigs.length" description="暂未配置访问地址" :image-size="64" />
-        <div v-for="(item, index) in groupForm.accessConfigs" :key="index" class="access-config-row">
-          <el-select v-model="item.environmentCode" placeholder="环境">
-            <el-option v-for="option in environmentOptions" :key="option.value" :label="option.label" :value="option.value" />
-          </el-select>
-          <el-select v-model="item.endpointType" placeholder="类型" @change="handleEndpointTypeChange(item)">
-            <el-option v-for="option in endpointTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
-          </el-select>
-          <el-input v-model="item.endpointName" placeholder="地址名称" />
-          <el-input v-model="item.endpointUrl" placeholder="https://example.com" />
-          <el-input
-            v-if="item.endpointType === 'GATEWAY'"
-            v-model="item.pathPrefix"
-            placeholder="网关前缀，如 /asset-api"
-          />
-          <span v-else class="access-prefix-placeholder">—</span>
-          <el-switch v-model="item.enabled" />
-          <el-button link type="danger" @click="removeBusinessLineAccessConfig(index)">删除</el-button>
-        </div>
+        <el-table
+          :data="groupForm.accessConfigs"
+          size="small"
+          class="access-config-table"
+          empty-text="暂未配置访问地址"
+        >
+          <el-table-column label="环境" min-width="80">
+            <template #default="{ row }">
+              <el-select v-model="row.environmentCode" size="small" placeholder="环境">
+                <el-option v-for="option in groupEnvironmentOptions" :key="option.value" :label="option.label" :value="option.value" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" min-width="86">
+            <template #default="{ row }">
+              <el-select v-model="row.endpointType" size="small" placeholder="类型" @change="handleEndpointTypeChange(row)">
+                <el-option v-for="option in endpointTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="地址名称" min-width="104">
+            <template #default="{ row }">
+              <el-input v-model="row.endpointName" size="small" placeholder="名称" />
+            </template>
+          </el-table-column>
+          <el-table-column label="地址" min-width="200">
+            <template #default="{ row }">
+              <el-input v-model="row.endpointUrl" size="small" placeholder="https://example.com" />
+            </template>
+          </el-table-column>
+          <el-table-column label="网关前缀" min-width="96">
+            <template #default="{ row }">
+              <el-input
+                v-if="row.endpointType === 'GATEWAY'"
+                v-model="row.pathPrefix"
+                size="small"
+                placeholder="/asset-api"
+              />
+              <span v-else class="access-prefix-placeholder">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="登录账号" min-width="96">
+            <template #default="{ row }">
+              <el-input v-model="row.loginUsername" size="small" placeholder="可选" clearable />
+            </template>
+          </el-table-column>
+          <el-table-column label="登录密码" min-width="130">
+            <template #default="{ row }">
+              <el-input
+                v-model="row.loginPassword"
+                size="small"
+                type="password"
+                show-password
+                :placeholder="row.loginPasswordConfigured ? '留空则不修改' : '可选'"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="启用" width="48" align="center">
+            <template #default="{ row }">
+              <el-switch v-model="row.enabled" size="small" />
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="48" align="center">
+            <template #default="{ $index }">
+              <el-button link type="danger" size="small" @click="removeBusinessLineAccessConfig($index)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
     </el-form>
     <template #footer>
@@ -894,6 +1002,24 @@ onMounted(async () => {
   margin-bottom: 12px;
 }
 
+/* el-dialog 根元素不携带本组件 scoped 属性，弹窗容器规则需用 :global 命中 */
+:global(.business-line-dialog) {
+  --el-dialog-margin-top: 4vh;
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+}
+
+:global(.business-line-dialog .el-dialog__header),
+:global(.business-line-dialog .el-dialog__footer) {
+  flex-shrink: 0;
+}
+
+:global(.business-line-dialog .el-dialog__body) {
+  flex: 1;
+  overflow-y: auto;
+}
+
 .access-config-section {
   padding-top: 4px;
   border-top: 1px solid var(--el-border-color-lighter);
@@ -913,12 +1039,12 @@ onMounted(async () => {
   font-size: 13px;
 }
 
-.access-config-row {
-  display: grid;
-  grid-template-columns: 112px 112px 120px minmax(190px, 1fr) minmax(150px, 0.8fr) 42px 42px;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 10px;
+.access-config-table :deep(.el-table__cell) {
+  padding: 4px 0;
+}
+
+.access-config-table :deep(.cell) {
+  padding: 0 6px;
 }
 
 .access-prefix-placeholder {

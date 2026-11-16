@@ -143,7 +143,7 @@ function calculateReportHeight(report: ProjectProgressReport): number {
 
 function drawSummaryCards(context: CanvasRenderingContext2D, summary: ProjectProgressReportSummary[], x: number, y: number, width: number) {
   const gap = 16
-  const cardWidth = (width - gap * 3) / 4
+  const cardWidth = (width - gap * (summary.length - 1)) / summary.length
   summary.forEach((item, index) => {
     const cardX = x + index * (cardWidth + gap)
     drawRoundedRect(context, cardX, y, cardWidth, 150, 16, '#f8fafc', '#e2e8f0')

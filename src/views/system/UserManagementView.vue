@@ -206,10 +206,6 @@ onMounted(async () => {
 
 <template>
   <div class="page-card table-card">
-    <div class="page-header">
-      <el-button v-if="canCreate" type="primary" @click="openCreate">新增账号</el-button>
-    </div>
-
     <el-form inline class="filter-form" @submit.prevent="loadUsers">
       <el-form-item label="关键字">
         <el-input v-model="filters.keyword" clearable placeholder="用户名 / 昵称" @keyup.enter="loadUsers" />
@@ -222,6 +218,7 @@ onMounted(async () => {
       </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="loadUsers">查询</el-button>
+        <el-button v-if="canCreate" type="primary" @click="openCreate">新增账号</el-button>
       </el-form-item>
     </el-form>
 

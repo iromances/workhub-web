@@ -25,6 +25,7 @@ export interface ProjectGroup {
   businessLineName: string
   groupName: string
   gitlabGroupName: string | null
+  supportedEnvironments: string[]
   accessConfigs: ProjectGroupAccessConfig[]
   description: string | null
   enabled: boolean
@@ -41,6 +42,8 @@ export interface ProjectGroupAccessConfig {
   endpointName: string
   endpointUrl: string
   pathPrefix: string | null
+  loginUsername: string | null
+  loginPasswordConfigured: boolean
   sortOrder: number
   enabled: boolean
   createdAt: string | null
@@ -178,6 +181,7 @@ export interface IntakeDashboardBusinessLineStats {
   developingCount: number
   testingCount: number
   pendingReleaseCount: number
+  pausedCount: number
   totalCount: number
   demandCount: number
   demandRatio: number
@@ -246,6 +250,40 @@ export interface IntakeDashboard {
   businessLineStats: IntakeDashboardBusinessLineStats[]
   highlightedDemands: IntakeDashboardDemand[]
   progressReport: ProjectProgressReport
+}
+
+export type IntakeBoardGroupBy = 'demandOwner' | 'taskOwner'
+
+export interface IntakeBoardRequirement {
+  id: number
+  requirementName: string | null
+  approvalCode: string | null
+  demandStatus: string
+  requirementType: string | null
+  priority: string | null
+  businessLine: string | null
+  businessLineCode: string | null
+  taskCount: number
+  totalEstimatedEffort: string | null
+  actualEffort: string | null
+  startDate: string | null
+  dueDate: string | null
+  ownedTaskCount: number
+  ownedEstimatedEffort: string | null
+}
+
+export interface IntakeBoardPerson {
+  userName: string | null
+  displayName: string
+  requirementCount: number
+  totalEstimatedEffort: string | null
+  requirements: IntakeBoardRequirement[]
+}
+
+export interface IntakeBoard {
+  groupBy: IntakeBoardGroupBy
+  includeClosed: boolean
+  people: IntakeBoardPerson[]
 }
 
 export interface IntakeRequirementFolder {
@@ -333,6 +371,48 @@ export interface DevelopmentAnalysisDraft {
   zentaoSyncMessage: string | null
   generatedAt: string | null
   generator: string | null
+  sddDocuments: IntakeSddDocuments | null
+}
+
+export interface IntakeSddDocuments {
+  sddProposal: string | null
+  sddDesign: string | null
+  sddTasks: string | null
+}
+
+export interface IntakeAiDevelopment {
+  intakeId: number
+  developmentBranch: string | null
+  agentId: string | null
+  agentTaskId: string | null
+  executionStatus: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | string
+  executionMessage: string | null
+  updatedAt: string | null
+}
+
+export interface SubmitTestFinding {
+  title: string
+  severity: 'HIGH' | 'MEDIUM' | 'LOW' | string
+  description: string | null
+  evidence: string | null
+}
+
+export interface IntakeSubmitTestReview {
+  intakeId: number
+  reviewStatus: 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'SKIPPED' | string
+  reviewMessage: string | null
+  conclusion: string | null
+  summary: string | null
+  findings: SubmitTestFinding[]
+  humanConfirmedBy: string | null
+  humanConfirmedAt: string | null
+  zentaoTestTaskNo: string | null
+  zentaoTestTaskUrl: string | null
+  jenkinsEnvironmentCode: string | null
+  jenkinsBuildNumber: number | null
+  jenkinsBuildUrl: string | null
+  jenkinsBuildStatus: string | null
+  updatedAt: string | null
 }
 
 export interface DevelopmentAnalysisResponse {
@@ -340,6 +420,9 @@ export interface DevelopmentAnalysisResponse {
   intakeId: number
   status: string
   message: string | null
+  retryable: boolean
+  startedAt: string | null
+  finishedAt: string | null
   draft: DevelopmentAnalysisDraft | null
   createdAt: string
   updatedAt: string
@@ -362,6 +445,9 @@ export interface IntakeClarificationAnalysisResponse {
   intakeId: number
   status: string
   message: string | null
+  retryable: boolean
+  startedAt: string | null
+  finishedAt: string | null
   items: IntakeClarificationItem[]
   createdAt: string
   updatedAt: string
@@ -434,6 +520,7 @@ export interface IntakeDetail {
   externalMessageId: string | null
   senderName: string
   developmentOwnerUserName: string | null
+  developmentStandard: string | null
   receivedAt: string
   demandStatus: string
   pausePreviousDemandStatus: string | null

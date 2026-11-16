@@ -17,6 +17,7 @@ import {
   updateMcpResource,
 } from '@/api/mcp'
 import { fetchProjectGroups, fetchSelectableProjectInvolvedSystems } from '@/api/project'
+import { toEnvironmentOptions } from '@/constants/environment'
 import { useAuthStore } from '@/stores/auth'
 import type {
   McpAuditEntry,
@@ -58,6 +59,7 @@ const bastionTestResult = ref<{
 } | null>(null)
 const catalogVisible = ref(false)
 const editingId = ref<number | null>(null)
+const originalReadPaths = ref<string[]>([])
 const editingBastionId = ref<number | null>(null)
 const activeTab = ref<'DATABASE' | 'BASTION' | 'SERVER' | 'AUDIT'>('DATABASE')
 const resources = ref<McpResource[]>([])
@@ -71,12 +73,9 @@ const editingPasswordConfigured = ref(false)
 const editingSshPasswordConfigured = ref(false)
 const editingSshBastionPasswordConfigured = ref(false)
 
-const environmentOptions = [
-  { label: '开发', value: 'dev' },
-  { label: '测试', value: 'test' },
-  { label: '准生产', value: 'staging' },
-  { label: '生产', value: 'prod' },
-]
+const filterEnvironmentOptions = computed(() => (
+  toEnvironmentOptions(businessLines.value.flatMap((line) => line.supportedEnvironments || []))
+))
 
 const filters = reactive({
   resourceType: '' as McpResourceType | '',
@@ -144,6 +143,22 @@ const serverResources = computed(() => resources.value.filter((item) => item.res
 const enabledBastions = computed(() => bastionOptions.value.filter((item) => item.enabled))
 const catalogText = computed(() => (catalog.value ? JSON.stringify(catalog.value, null, 2) : ''))
 const businessLineOptions = computed(() => businessLines.value.filter((item) => item.enabled))
+const formEnvironmentOptions = computed(() => {
+  const line = form.publicResource
+    ? undefined
+    : businessLines.value.find((item) => item.businessLineCode === form.businessLineCodes[0])
+  if (line?.supportedEnvironments?.length) {
+    return toEnvironmentOptions(line.supportedEnvironments)
+  }
+  return toEnvironmentOptions(businessLines.value.flatMap((item) => item.supportedEnvironments || []))
+})
+
+function syncFormEnvironment() {
+  const options = formEnvironmentOptions.value.map((item) => item.value)
+  if (!form.environmentCode || !options.includes(form.environmentCode)) {
+    form.environmentCode = options[0] || ''
+  }
+}
 const canCreate = computed(() => authStore.hasAnyPermission(['ops:mcp-resource:create', 'ops:mcp-resource:manage']))
 const canUpdate = computed(() => authStore.hasAnyPermission(['ops:mcp-resource:update', 'ops:mcp-resource:manage']))
 const canDelete = computed(() => authStore.hasAnyPermission(['ops:mcp-resource:delete', 'ops:mcp-resource:manage']))
@@ -269,13 +284,14 @@ async function openCatalog() {
 
 function resetForm(type: McpResourceType) {
   editingId.value = null
+  originalReadPaths.value = []
   form.resourceType = type
   form.targetKey = ''
   form.publicResource = false
   form.featureTags = []
   form.businessLineCode = ''
   form.businessLineCodes = []
-  form.environmentCode = 'dev'
+  form.environmentCode = ''
   form.name = ''
   form.systemName = ''
   form.systemNames = []
@@ -293,7 +309,7 @@ function resetForm(type: McpResourceType) {
   form.sshBastionPassword = ''
   form.sshIdentityFile = ''
   form.allowedServices = []
-  form.allowedLogPaths = []
+  form.allowedLogPaths = type === 'SERVER' ? ['/mnt'] : []
   form.profiles = [defaultProfile(type)]
   form.enabled = true
   form.remark = ''
@@ -380,6 +396,7 @@ function openEdit(row: McpResource) {
   form.sshIdentityFile = row.sshIdentityFile || ''
   form.allowedServices = [...row.allowedServices]
   form.allowedLogPaths = [...row.allowedLogPaths]
+  originalReadPaths.value = [...row.allowedLogPaths]
   form.profiles = row.profiles.length ? row.profiles.map((profile) => ({ ...profile })) : [defaultProfile(row.resourceType)]
   form.enabled = row.enabled
   form.remark = row.remark || ''
@@ -439,8 +456,8 @@ function validateForm() {
       ElMessage.warning('服务器资源需填写 SSH 密码或私钥文件')
       return false
     }
-    if (form.allowedLogPaths?.some((path) => !path.trim().startsWith('/'))) {
-      ElMessage.warning('日志目录白名单必须填写绝对路径')
+    if (form.allowedLogPaths?.some((path) => !path.trim().startsWith('/') || path.trim() === '/' || path.split('/').includes('..'))) {
+      ElMessage.warning('允许 AI 读取的白名单目录必须为绝对路径，不能使用 / 或 ..')
       return false
     }
   }
@@ -799,12 +816,26 @@ watch(
 )
 
 async function submit() {
-  if (!validateForm()) {
+  if (submitting.value || !validateForm()) {
     return
   }
+  const request = requestFromForm()
   submitting.value = true
   try {
-    const request = requestFromForm()
+    if (request.resourceType === 'SERVER') {
+      const authorizedRoots = ['/mnt', ...originalReadPaths.value]
+        .map((path) => path.trim().replace(/\/+$/, '')).filter(Boolean)
+      const additionalRoots = (request.allowedLogPaths || [])
+        .map((path) => path.trim().replace(/\/+$/, ''))
+        .filter((path) => path && !authorizedRoots.some((root) => path === root || path.startsWith(`${root}/`)))
+      if (additionalRoots.length) {
+        await ElMessageBox.confirm(
+          `将允许 AI 读取以下目录及其子目录：${additionalRoots.join('、')}。请确认明确授权这些目录。`,
+          '授权其他读取目录',
+          { type: 'warning', confirmButtonText: '明确授权并保存', cancelButtonText: '取消' },
+        )
+      }
+    }
     if (editingId.value) {
       await updateMcpResource(editingId.value, request)
     } else {
@@ -814,6 +845,9 @@ async function submit() {
     drawerVisible.value = false
     await loadResources()
   } catch (error) {
+    if (error === 'cancel' || error === 'close') {
+      return
+    }
     ElMessage.error('保存 MCP 资源失败')
     console.error(error)
   } finally {
@@ -884,11 +918,21 @@ onMounted(async () => {
 })
 
 watch(
-  () => [form.resourceType, form.businessLineCodes.join('|')],
+  () => form.resourceType,
+  (type) => {
+    if (!editingId.value) {
+      form.allowedLogPaths = type === 'SERVER' ? ['/mnt'] : []
+    }
+  },
+)
+
+watch(
+  () => [form.resourceType, form.businessLineCodes.join('|'), form.publicResource],
   async () => {
     await loadSystemOptions()
     form.systemNames = form.systemNames?.filter((name) => systemOptions.value.some((item) => item.systemName === name)) || []
     form.systemName = form.systemNames[0] || ''
+    syncFormEnvironment()
   },
 )
 
@@ -933,7 +977,7 @@ watch(
         </el-form-item>
         <el-form-item label="环境">
           <el-select v-model="filters.environmentCode" clearable placeholder="全部环境" class="environment-filter">
-            <el-option v-for="item in environmentOptions" :key="item.value" :label="item.label" :value="item.value" />
+            <el-option v-for="item in filterEnvironmentOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="关键字">
@@ -1000,7 +1044,7 @@ watch(
           </el-table-column>
           <el-table-column label="环境" width="90">
             <template #default="{ row }">
-              {{ environmentOptions.find((item) => item.value === row.environmentCode)?.label || row.environmentCode }}
+              {{ row.environmentCode }}
             </template>
           </el-table-column>
           <el-table-column prop="targetKey" label="目标 key" width="180" show-overflow-tooltip />
@@ -1094,7 +1138,7 @@ watch(
           </el-table-column>
           <el-table-column label="环境" width="90">
             <template #default="{ row }">
-              {{ environmentOptions.find((item) => item.value === row.environmentCode)?.label || row.environmentCode }}
+              {{ row.environmentCode }}
             </template>
           </el-table-column>
           <el-table-column prop="targetKey" label="目标 key" width="180" show-overflow-tooltip />
@@ -1125,7 +1169,7 @@ watch(
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="日志目录白名单" min-width="220" show-overflow-tooltip>
+          <el-table-column label="允许 AI 读取的白名单目录" min-width="220" show-overflow-tooltip>
             <template #default="{ row }">
               <el-tag v-for="path in row.allowedLogPaths" :key="path" class="tag-gap" type="info">
                 {{ path }}
@@ -1247,8 +1291,8 @@ watch(
         </el-col>
         <el-col :span="form.publicResource ? 16 : 8">
           <el-form-item label="环境" required>
-            <el-select v-model="form.environmentCode" style="width: 100%">
-              <el-option v-for="item in environmentOptions" :key="item.value" :label="item.label" :value="item.value" />
+            <el-select v-model="form.environmentCode" style="width: 100%" placeholder="请先选择业务线">
+              <el-option v-for="item in formEnvironmentOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
         </el-col>
@@ -1354,17 +1398,17 @@ watch(
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="日志目录白名单">
+        <el-form-item label="允许 AI 读取的白名单目录">
           <el-select
             v-model="form.allowedLogPaths"
             multiple
             filterable
             allow-create
             default-first-option
-            placeholder="填写多个绝对目录；留空表示不限制日志路径"
+            placeholder="默认 /mnt；清空后禁止按路径读取"
             style="width: 100%"
           />
-          <div class="form-tip">读取日志时可指定任一白名单目录下的具体服务日志文件。</div>
+          <div class="form-tip">日志、目录浏览和文件内容读取共用；其他目录必须由用户明确授权后添加，AI 不得自行扩展。</div>
         </el-form-item>
       </template>
 

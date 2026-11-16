@@ -11,6 +11,7 @@ import type {
   DictOption,
   CodexModelCatalog,
   CodexModelCatalogRequest,
+  ZCodeModelCatalogRequest,
 } from '@/types/ai-config'
 
 import http from './http'
@@ -70,6 +71,10 @@ export async function createAiUseCase(request: AiUseCaseConfigRequest): Promise<
   return response.data.data
 }
 
+export async function deleteAiUseCase(id: number, version: number): Promise<void> {
+  await http.delete<ApiResponse<void>>(`/manage/system/ai-use-case/${id}`, { params: { version } })
+}
+
 export async function updateAiUseCase(id: number, request: AiUseCaseConfigRequest): Promise<AiUseCaseConfig> {
   const response = await http.post<ApiResponse<AiUseCaseConfig>>('/manage/system/ai-use-case/save', { ...request, id })
   return response.data.data
@@ -81,6 +86,11 @@ export async function fetchDictOptions(dictType: string): Promise<DictOption[]> 
 }
 
 export async function fetchCodexModels(request: CodexModelCatalogRequest): Promise<CodexModelCatalog> {
-  const response = await http.post<ApiResponse<CodexModelCatalog>>('/manage/system/ai-provider/codex-models', request)
+  const response = await http.post<ApiResponse<CodexModelCatalog>>('/manage/system/ai-provider/codex-models', request, { timeout: 40000 })
+  return response.data.data
+}
+
+export async function fetchZCodeModels(request: ZCodeModelCatalogRequest): Promise<CodexModelCatalog> {
+  const response = await http.post<ApiResponse<CodexModelCatalog>>('/manage/system/ai-provider/zcode-models', request, { timeout: 40000 })
   return response.data.data
 }

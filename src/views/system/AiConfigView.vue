@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ElMessage, type FormInstance } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 
 import {
@@ -10,9 +11,10 @@ import {
   fetchAiUseCases,
   fetchDictOptions,
   fetchCodexModels,
+  fetchZCodeModels,
   testAiProviderConnection,
   updateAiProvider,
-  updateAiUseCase,
+  deleteAiUseCase, updateAiUseCase,
 } from '@/api/ai-config'
 import { useAuthStore } from '@/stores/auth'
 import type {
@@ -72,6 +74,7 @@ const useCaseSaving = ref(false)
 const providerDialogVisible = ref(false)
 const providerChannelTab = ref<'API' | 'CLI'>('API')
 const useCaseDialogVisible = ref(false)
+const useCaseEditTab = ref('basic')
 const providerFormRef = ref<FormInstance>()
 const useCaseFormRef = ref<FormInstance>()
 const providerList = ref<AiProviderConfig[]>([])
@@ -121,9 +124,30 @@ const providerForm = reactive({
   remark: '',
 })
 
+interface CliCatalogRequest {
+  cliType: 'CODEX' | 'ZCODE'
+  cliCommand: string
+  cliWorkingDirectory?: string
+  cliRuntimeCommand?: string
+  cliBuiltinConfigPath?: string
+  cliPersonalConfigPath?: string
+  forceRefresh?: boolean
+}
+
+function fetchCliCatalog(request: CliCatalogRequest) {
+  const { cliType, cliRuntimeCommand, cliBuiltinConfigPath, cliPersonalConfigPath, ...common } = request
+  return cliType === 'ZCODE'
+    ? fetchZCodeModels({ cliCommand: common.cliCommand, forceRefresh: common.forceRefresh,
+      cliRuntimeCommand, cliBuiltinConfigPath, cliPersonalConfigPath })
+    : fetchCodexModels(common)
+}
+
 const cliCatalog = reactive<CodexCatalogState>({ catalog: null, loading: false, error: '' })
-const cliCatalogLoader = createCodexCatalogLoader(cliCatalog, fetchCodexModels,
-  error => errorMessage(error, '加载 Codex 模型失败，请重试'))
+const cliCatalogLoader = createCodexCatalogLoader(cliCatalog, fetchCliCatalog,
+  error => errorMessage(error, '加载 CLI 模型失败，请重试'))
+const useCaseCliCatalog = reactive<CodexCatalogState>({ catalog: null, loading: false, error: '' })
+const useCaseCliCatalogLoader = createCodexCatalogLoader(useCaseCliCatalog, fetchCliCatalog,
+  error => errorMessage(error, '加载通道模型列表失败，请重试'))
 let originalCli: ChannelForm | null = null
 const isZCode = computed(() => providerForm.cli.cliType === 'ZCODE')
 const cliModels = computed(() => cliCatalog.catalog?.models ?? [])
@@ -142,8 +166,12 @@ function invalidateCliCatalog() {
 }
 
 function loadCliCatalog(forceRefresh = false) {
-  if (!providerDialogVisible.value || !providerForm.cli.enabled || isZCode.value) return
+  if (!providerDialogVisible.value || !providerForm.cli.enabled) return
   void cliCatalogLoader.load({
+    cliType: providerForm.cli.cliType,
+    cliRuntimeCommand: providerForm.cli.cliRuntimeCommand,
+    cliBuiltinConfigPath: providerForm.cli.cliBuiltinConfigPath,
+    cliPersonalConfigPath: providerForm.cli.cliPersonalConfigPath,
     cliCommand: providerForm.cli.cliCommand,
     cliWorkingDirectory: providerForm.cli.cliWorkingDirectory,
     forceRefresh,
@@ -164,12 +192,17 @@ function cliEnabledChanged() {
   loadCliCatalog()
 }
 
-function validateZCode(channel: ChannelForm) {
-  if (!channel.enabled) return ''
+function validateZCodeFormat(channel: ChannelForm) {
   if (!/^[^\s/$]+\/[^\s$]+$/.test(channel.defaultModel)) return '请填写 ZCode 的 Provider/Model 标识'
   if (!channel.defaultReasoningLevel.trim()) return '请填写 ZCode 模型支持的推理档位'
   if (channel.defaultSpeedMode !== 'STANDARD') return 'ZCode 速度使用标准模式'
   return ''
+}
+
+/** 仅接入配置弹框使用：目录选型校验依赖该弹框的 cliCatalog 与 originalCli */
+function validateZCode(channel: ChannelForm) {
+  if (!channel.enabled) return ''
+  return validateZCodeFormat(channel) || validateCliSelection(channel, originalCli, cliCatalog.catalog)
 }
 
 function cliModelChanged() {
@@ -193,6 +226,9 @@ const useCaseForm = reactive({
   uiProviderVendor: '',
   uiProviderModelProvider: '',
   uiProviderSelection: '',
+  capability: null as string | null,
+  allowedChannelTypes: null as string[] | null,
+  allowedCliTypes: null as string[] | null,
   model: '',
   reasoningLevel: '',
   speedMode: '',
@@ -247,8 +283,17 @@ const providerGroups = computed<AiProviderGroup[]>(() => {
   return Array.from(groups.values()).sort((left, right) => left.groupName.localeCompare(right.groupName, 'zh-CN'))
 })
 
+/** 按后端下发的场景能力判断通道是否可选；未注册场景（能力字段为空）不做限制 */
+function useCaseChannelAllowed(item: AiProviderConfig): boolean {
+  if (!useCaseForm.allowedChannelTypes && !useCaseForm.allowedCliTypes) return true
+  if (useCaseForm.allowedChannelTypes && !useCaseForm.allowedChannelTypes.includes(item.channelType)) return false
+  if (item.channelType === 'CLI' && useCaseForm.allowedCliTypes
+    && !useCaseForm.allowedCliTypes.includes(resolvedCliType(item))) return false
+  return true
+}
+
 const useCaseVendorOptions = computed(() => {
-  const values = new Set(providerList.value.map((item) => item.vendor || ''))
+  const values = new Set(providerList.value.filter(useCaseChannelAllowed).map((item) => item.vendor || ''))
   return Array.from(values).map((value) => ({ value, label: vendorText(value) }))
 })
 
@@ -256,7 +301,7 @@ const useCaseModelProviderOptions = computed(() => {
   const vendor = useCaseForm.uiProviderVendor || ''
   const values = new Set<string>()
   providerList.value.forEach((item) => {
-    if ((item.vendor || '') === vendor && item.modelProvider) {
+    if ((item.vendor || '') === vendor && item.modelProvider && useCaseChannelAllowed(item)) {
       values.add(item.modelProvider)
     }
   })
@@ -268,7 +313,7 @@ const useCaseChannelOptions = computed(() => {
   const modelProvider = useCaseForm.uiProviderModelProvider
   return providerList.value
     .filter((item) => (item.vendor || '') === vendor && item.modelProvider === modelProvider)
-    .filter((item) => !requiresLocalRepository(useCaseForm.useCaseCode) || (item.channelType === 'CLI' && resolvedCliType(item) !== 'ZCODE'))
+    .filter(useCaseChannelAllowed)
     .map((item) => ({
       value: String(item.id),
       label: `${item.channelType === 'CLI' ? resolvedCliType(item) === 'ZCODE' ? 'GLM ZCode CLI' : 'Codex CLI' : channelTypeText(item.channelType)} · ${item.providerName}${item.enabled ? '' : '（停用）'}`,
@@ -288,18 +333,85 @@ const selectedProvider = computed(() => {
 const selectedProviderIsZCode = computed(() => !!selectedProvider.value && selectedProvider.value.channelType === 'CLI' && resolvedCliType(selectedProvider.value) === 'ZCODE')
 const useCaseSpeedOptions = computed(() => speedOptions.filter(item => !selectedProviderIsZCode.value || item.code === 'STANDARD'))
 
-const effectivePreview = computed(() => {
+/** 模型/强度覆盖可选值跟随所选通道：CLI 用目录真实列表，API 用系统字典，通道默认值始终兜底可选 */
+const useCaseModelOptions = computed(() => {
   const provider = selectedProvider.value
-  return {
-    model: useCaseForm.model || provider?.defaultModel || '-',
-    modelSource: useCaseForm.model ? 'USE_CASE' : (provider?.defaultModel ? 'PROVIDER' : 'NONE'),
-    reasoning: useCaseForm.reasoningLevel || provider?.defaultReasoningLevel || '-',
-    reasoningSource: useCaseForm.reasoningLevel ? 'USE_CASE' : (provider?.defaultReasoningLevel ? 'PROVIDER' : 'NONE'),
-    speed: useCaseForm.speedMode || provider?.defaultSpeedMode || '-',
-    speedSource: useCaseForm.speedMode ? 'USE_CASE' : (provider?.defaultSpeedMode ? 'PROVIDER' : 'NONE'),
-    timeout: useCaseForm.timeoutSeconds || provider?.callTimeoutSeconds || null,
-    timeoutSource: useCaseForm.timeoutSeconds ? 'USE_CASE' : (provider?.callTimeoutSeconds ? 'PROVIDER' : 'NONE'),
+  const merged = new Map<string, string>()
+  const addOption = (code?: string, label?: string) => {
+    if (code && !merged.has(code)) merged.set(code, label || code)
   }
+  if (provider?.channelType === 'CLI') {
+    (useCaseCliCatalog.catalog?.models ?? []).forEach(item => addOption(item.model, item.displayName))
+  } else {
+    modelOptions.forEach(item => addOption(item.code, item.label))
+  }
+  addOption(provider?.defaultModel, provider?.defaultModel)
+  return Array.from(merged, ([code, label]) => ({ code, label }))
+})
+
+/** 强度覆盖可选值：CLI 通道取当前生效模型（覆盖模型，未填则通道默认模型）支持的档位 */
+const useCaseEffectiveCliModel = computed(() => {
+  const provider = selectedProvider.value
+  if (provider?.channelType !== 'CLI') return undefined
+  const modelId = useCaseForm.model || provider.defaultModel || ''
+  return useCaseCliCatalog.catalog?.models.find(item => item.model === modelId)
+})
+
+const useCaseReasoningOptions = computed<(OptionItem & { title?: string })[]>(() => {
+  const model = useCaseEffectiveCliModel.value
+  if (!model) return reasoningOptions.map(item => ({ ...item }))
+  return model.supportedReasoningEfforts.map(item => ({
+    code: item.reasoningEffort, label: item.reasoningEffort, title: item.description,
+  }))
+})
+
+const useCaseReasoningMissing = computed(() => {
+  const model = useCaseEffectiveCliModel.value
+  if (!model || !useCaseForm.reasoningLevel) return false
+  return !matchingEffort(model, useCaseForm.reasoningLevel)
+})
+
+watch(useCaseEffectiveCliModel, model => {
+  if (!model || !useCaseForm.reasoningLevel) return
+  if (!matchingEffort(model, useCaseForm.reasoningLevel)) {
+    useCaseForm.reasoningLevel = reasoningAfterModelChange(model, useCaseForm.reasoningLevel)
+  }
+})
+
+function loadUseCaseCliCatalog() {
+  const provider = selectedProvider.value
+  if (!useCaseDialogVisible.value || !provider || provider.channelType !== 'CLI') return
+  void useCaseCliCatalogLoader.load({
+    cliType: resolvedCliType(provider),
+    cliCommand: provider.cliCommand || '',
+    cliWorkingDirectory: provider.cliWorkingDirectory,
+    cliRuntimeCommand: provider.cliRuntimeCommand,
+    cliBuiltinConfigPath: provider.cliBuiltinConfigPath,
+    cliPersonalConfigPath: provider.cliPersonalConfigPath,
+  })
+}
+
+watch(useCaseDialogVisible, visible => {
+  if (!visible) useCaseCliCatalogLoader.invalidate()
+}, { flush: 'sync' })
+
+/** 覆盖项留空即继承通道默认，这里把默认值直接展示在输入框提示里 */
+const inheritModelPlaceholder = computed(() => {
+  const raw = selectedProvider.value?.defaultModel
+  return '留空继承通道默认模型'
+})
+const inheritReasoningPlaceholder = computed(() => {
+  const raw = selectedProvider.value?.defaultReasoningLevel
+  if (!raw) return '继承通道默认值'
+  return selectedProvider.value?.channelType === 'CLI' ? `默认：${raw}` : `默认：${reasoningText(raw)}`
+})
+const inheritSpeedPlaceholder = computed(() => {
+  const raw = selectedProvider.value?.defaultSpeedMode
+  return raw ? `默认：${speedText(raw)}` : '继承通道默认值'
+})
+const inheritTimeoutPlaceholder = computed(() => {
+  const raw = selectedProvider.value?.callTimeoutSeconds
+  return raw ? `默认：${raw}s` : '继承通道默认值'
 })
 
 function createChannelForm(channelType: 'API' | 'CLI'): ChannelForm {
@@ -370,14 +482,6 @@ async function loadUseCases() {
     ElMessage.error(errorMessage(error, '加载 AI 场景配置失败'))
   } finally {
     useCaseLoading.value = false
-  }
-}
-
-function reloadCurrent() {
-  if (activeTab.value === 'provider') {
-    loadProviders()
-  } else {
-    loadUseCases()
   }
 }
 
@@ -621,9 +725,14 @@ async function openUseCaseDialog(row: AiUseCaseConfig) {
       promptChecksum: detail.promptChecksum || '',
       enabled: detail.enabled,
       remark: detail.remark || '',
+      capability: detail.capability ?? null,
+      allowedChannelTypes: detail.allowedChannelTypes ?? null,
+      allowedCliTypes: detail.allowedCliTypes ?? null,
     })
     syncUseCaseProviderFields()
+    useCaseEditTab.value = 'basic'
     useCaseDialogVisible.value = true
+    loadUseCaseCliCatalog()
   } catch (error) {
     ElMessage.error(errorMessage(error, '加载 AI 场景详情失败'))
   }
@@ -639,6 +748,9 @@ function resetUseCaseForm() {
   useCaseForm.uiProviderVendor = ''
   useCaseForm.uiProviderModelProvider = ''
   useCaseForm.uiProviderSelection = ''
+  useCaseForm.capability = null
+  useCaseForm.allowedChannelTypes = null
+  useCaseForm.allowedCliTypes = null
   useCaseForm.model = ''
   useCaseForm.reasoningLevel = ''
   useCaseForm.speedMode = ''
@@ -651,6 +763,31 @@ function resetUseCaseForm() {
   useCaseForm.promptChecksum = ''
   useCaseForm.enabled = true
   useCaseForm.remark = ''
+}
+
+const useCaseDeleting = ref(false)
+
+async function removeUseCase(row: AiUseCaseConfig) {
+  const registered = Boolean(row.capability)
+  try {
+    await ElMessageBox.confirm(
+      registered
+        ? `确定删除「${row.useCaseName || row.useCaseCode}」？该任务为平台功能依赖，删除后相关流程将不可用，可重新创建恢复。`
+        : `确定删除「${row.useCaseName || row.useCaseCode}」？删除后可重新创建恢复。`,
+      '删除 AI 任务',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch { return }
+  useCaseDeleting.value = true
+  try {
+    await deleteAiUseCase(row.id, row.version)
+    ElMessage.success('AI 任务已删除')
+    await loadUseCases()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '删除 AI 任务失败'))
+  } finally {
+    useCaseDeleting.value = false
+  }
 }
 
 async function saveUseCaseForm() {
@@ -667,7 +804,7 @@ async function saveUseCaseForm() {
     return
   }
   if (selectedProviderIsZCode.value) {
-    const validation = validateZCode({ ...createChannelForm('CLI'), enabled: true,
+    const validation = validateZCodeFormat({ ...createChannelForm('CLI'), enabled: true,
       defaultModel: useCaseForm.model || selectedProvider.value?.defaultModel || '',
       defaultReasoningLevel: useCaseForm.reasoningLevel || selectedProvider.value?.defaultReasoningLevel || '',
       defaultSpeedMode: useCaseForm.speedMode || selectedProvider.value?.defaultSpeedMode || '' })
@@ -724,6 +861,7 @@ function handleUseCaseProviderParamChange(changedField: 'vendor' | 'modelProvide
     }
   }
   useCaseForm.providerConfigId = resolveUseCaseProviderConfigId()
+  loadUseCaseCliCatalog()
 }
 
 function syncUseCaseProviderFields() {
@@ -742,7 +880,7 @@ function resolveUseCaseProviderConfigId() {
     return (item.vendor || '') === vendor &&
       item.modelProvider === useCaseForm.uiProviderModelProvider &&
       String(item.id) === useCaseForm.uiProviderSelection &&
-      (!requiresLocalRepository(useCaseForm.useCaseCode) || (item.channelType === 'CLI' && resolvedCliType(item) === 'CODEX')) &&
+      useCaseChannelAllowed(item) &&
       (item.enabled || !useCaseForm.enabled)
   })
   return provider?.id || null
@@ -810,17 +948,34 @@ function sourceText(value?: string) {
   return '未配置'
 }
 
-function requiresLocalRepository(useCaseCode?: string) {
-  return ['intake.clarification.analyze', 'intake.development.analyze', 'intake.development.adjust'].includes(useCaseCode || '')
+function allowedChannelSummary() {
+  const channelTypes = useCaseForm.allowedChannelTypes || []
+  return channelTypes
+    .map((type) => {
+      if (type === 'CLI' && useCaseForm.allowedCliTypes?.length) {
+        return useCaseForm.allowedCliTypes.map((cli) => (cli === 'CODEX' ? 'Codex CLI' : 'GLM ZCode CLI')).join(' / ')
+      }
+      return channelTypeText(type)
+    })
+    .join('、')
 }
 
-function useCaseCapabilityText(useCaseCode?: string) {
-  if (requiresLocalRepository(useCaseCode)) {
-    return '本地仓库只读'
+const unmatchedProviderMessage = computed(() => {
+  const vendor = useCaseForm.uiProviderVendor || ''
+  const comboChannels = providerList.value
+    .filter((item) => (item.vendor || '') === vendor && item.modelProvider === useCaseForm.uiProviderModelProvider)
+  if (comboChannels.length === 0) {
+    return '当前供应商与模型厂商组合下没有接入通道，请先在“接入配置”中维护对应组合和通道。'
   }
-  if (['intake.structured.extract', 'intake.sql-draft.generate'].includes(useCaseCode || '')) {
-    return '文本 / 显式图片'
+  if (!comboChannels.some(useCaseChannelAllowed)) {
+    return `该场景能力仅允许 ${allowedChannelSummary()} 通道，当前组合下没有符合条件的通道，请更换组合或先在“接入配置”中维护对应通道。`
   }
+  return '当前组合下的通道均已停用，请先在“接入配置”中启用后再选择。'
+})
+
+function useCaseCapabilityText(capability?: string | null) {
+  if (capability === 'LOCAL_REPOSITORY_READ') return '本地仓库只读'
+  if (capability === 'IMAGE_INPUT') return '文本 / 显式图片'
   return '受控模型调用'
 }
 
@@ -846,16 +1001,6 @@ onMounted(async () => {
 
 <template>
   <div class="page-card ai-config-page">
-    <div class="page-header">
-      <div>
-        <p class="page-desc">统一维护 AI 接入通道、内置业务场景、模型参数、Schema 和提示词模板。</p>
-      </div>
-      <div class="header-actions">
-        <el-button @click="reloadCurrent">刷新</el-button>
-        <el-button v-if="activeTab === 'provider' && canCreate" type="primary" @click="openProviderDialog()">新增接入配置</el-button>
-      </div>
-    </div>
-
     <el-tabs v-model="activeTab" class="ai-tabs">
       <el-tab-pane label="AI任务配置" name="useCase">
         <el-form inline class="filter-form" @submit.prevent="loadUseCases">
@@ -911,7 +1056,7 @@ onMounted(async () => {
             <template #default="{ row }">{{ domainText(row.domain) }}</template>
           </el-table-column>
           <el-table-column label="执行能力" width="130" align="center">
-            <template #default="{ row }">{{ useCaseCapabilityText(row.useCaseCode) }}</template>
+            <template #default="{ row }">{{ useCaseCapabilityText(row.capability) }}</template>
           </el-table-column>
           <el-table-column label="接入配置" min-width="230" show-overflow-tooltip>
             <template #default="{ row }">
@@ -942,9 +1087,10 @@ onMounted(async () => {
               <div class="sub-text">{{ shortChecksum(row.promptChecksum) }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="96" fixed="right">
+          <el-table-column label="操作" width="124" fixed="right">
             <template #default="{ row }">
               <el-button v-if="canUpdate" link type="primary" @click="openUseCaseDialog(row)">编辑</el-button>
+              <el-button v-if="canUpdate" link type="danger" :loading="useCaseDeleting" @click="removeUseCase(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -962,6 +1108,9 @@ onMounted(async () => {
       </el-tab-pane>
 
       <el-tab-pane label="接入配置" name="provider">
+        <div class="provider-toolbar">
+          <el-button v-if="canCreate" type="primary" @click="openProviderDialog()">新增接入配置</el-button>
+        </div>
         <el-table v-loading="providerLoading" :data="providerGroups" border>
           <el-table-column label="状态" width="100" align="center">
             <template #default="{ row }">
@@ -1112,18 +1261,11 @@ onMounted(async () => {
                 <el-option label="Codex" value="CODEX" /><el-option label="GLM ZCode" value="ZCODE" />
               </el-select>
             </el-form-item>
-            <el-alert v-if="isZCode" title="使用服务端已有的 ZCode。任务运行使用独立工作目录；模型标识和推理档位以 ZCode 配置为准。" type="info" :closable="false" />
-            <div v-if="!isZCode" class="channel-head">
-              <span class="sub-text" v-if="cliCatalog.loading">正在读取 Codex 模型列表…</span>
-              <span class="sub-text" v-else-if="cliCatalog.catalog">
-                {{ cliCatalog.catalog.cached ? '使用最近查询结果' : '模型列表已更新' }} ·
-                {{ new Date(cliCatalog.catalog.fetchedAt).toLocaleTimeString() }}
-              </span>
-              <span class="sub-text" v-else>模型与推理强度来自运行服务的 Codex 环境</span>
-              <el-button :loading="cliCatalog.loading" @click="loadCliCatalog(true)">{{ cliCatalog.error ? '重试' : '刷新模型' }}</el-button>
+            <div class="channel-head">
+              <span class="sub-text" v-if="cliCatalog.loading">正在读取 {{ isZCode ? 'ZCode' : 'Codex' }} 模型列表…</span>
             </div>
-            <el-alert v-if="!isZCode && cliCatalog.error" :title="cliCatalog.error" type="error" :closable="false" show-icon />
-            <el-alert v-else-if="!isZCode && cliCatalog.catalog && (cliModelMissing || cliEffortMissing)"
+            <el-alert v-if="cliCatalog.error" :title="cliCatalog.error" type="error" :closable="false" show-icon />
+            <el-alert v-else-if="cliCatalog.catalog && (cliModelMissing || cliEffortMissing)"
               title="原配置的模型或推理强度当前不可选，已保留原值，请核对后选择。" type="warning" :closable="false" show-icon />
             <div class="form-grid two-grid">
               <el-form-item label="CLI命令">
@@ -1134,14 +1276,20 @@ onMounted(async () => {
               </el-form-item>
             </div>
             <div v-if="isZCode" class="form-grid two-grid">
-              <el-form-item label="Node 程序（CJS 分发）"><el-input v-model="providerForm.cli.cliRuntimeCommand" placeholder="留空使用 node；填写已有兼容版本的程序路径" /></el-form-item>
-              <el-form-item label="内置 Provider 定义"><el-input v-model="providerForm.cli.cliBuiltinConfigPath" placeholder="已安装分发包中的 zcode-builtin.json；Mac App CJS 可自动定位" /></el-form-item>
-              <el-form-item label="个人 Provider 配置"><el-input v-model="providerForm.cli.cliPersonalConfigPath" placeholder="留空使用服务用户 ~/.zcode/v2/provider_config.json" /></el-form-item>
+              <el-form-item label="Node 程序（CJS 分发）"><el-input v-model="providerForm.cli.cliRuntimeCommand" @input="invalidateCliCatalog" @change="loadCliCatalog()" placeholder="留空使用 node；填写已有兼容版本的程序路径" /></el-form-item>
+              <el-form-item label="内置 Provider 定义"><el-input v-model="providerForm.cli.cliBuiltinConfigPath" @input="invalidateCliCatalog" @change="loadCliCatalog()" placeholder="已安装分发包中的 zcode-builtin.json；Mac App CJS 可自动定位" /></el-form-item>
+              <el-form-item label="个人 Provider 配置"><el-input v-model="providerForm.cli.cliPersonalConfigPath" @input="invalidateCliCatalog" @change="loadCliCatalog()" placeholder="留空使用服务用户 ~/.zcode/v2/provider_config.json" /></el-form-item>
             </div>
             <div class="form-grid three-grid">
-              <el-form-item label="默认模型">
-                <el-input v-if="isZCode" v-model="providerForm.cli.defaultModel" placeholder="Provider/Model（来自 ZCode 配置）" />
-                <el-select v-else v-model="providerForm.cli.defaultModel" filterable style="width: 100%"
+              <el-form-item>
+                <template #label>
+                  <span class="model-label">默认模型
+                    <el-icon class="model-refresh" :class="{ 'is-loading': cliCatalog.loading }"
+                      title="刷新模型" @click="loadCliCatalog(true)"><Refresh /></el-icon>
+                    <span v-if="cliCatalog.catalog && !cliCatalog.loading" class="sub-text">{{ cliCatalog.catalog.cached ? '使用最近查询结果' : '模型列表已更新' }} · {{ new Date(cliCatalog.catalog.fetchedAt).toLocaleTimeString() }}</span>
+                  </span>
+                </template>
+                <el-select v-model="providerForm.cli.defaultModel" filterable style="width: 100%"
                   :loading="cliCatalog.loading" :disabled="!cliCatalog.catalog || cliCatalog.loading" @change="cliModelChanged">
                   <el-option v-if="cliModelMissing" :value="providerForm.cli.defaultModel"
                     :label="providerForm.cli.defaultModel + (cliCatalog.catalog ? '（当前不可选）' : '（原配置）')" disabled />
@@ -1149,8 +1297,7 @@ onMounted(async () => {
                 </el-select>
               </el-form-item>
               <el-form-item label="默认推理强度">
-                <el-input v-if="isZCode" v-model="providerForm.cli.defaultReasoningLevel" placeholder="模型支持的原始档位，如 enabled / disabled" />
-                <el-select v-else v-model="cliReasoningValue" filterable style="width: 100%"
+                <el-select v-model="cliReasoningValue" filterable style="width: 100%"
                   :disabled="!selectedCliModel || cliCatalog.loading">
                   <el-option v-if="cliEffortMissing" :value="providerForm.cli.defaultReasoningLevel"
                     :label="providerForm.cli.defaultReasoningLevel + (cliCatalog.catalog ? '（当前不可选）' : '（原配置）')" disabled />
@@ -1214,18 +1361,19 @@ onMounted(async () => {
 
   <el-dialog v-model="useCaseDialogVisible" title="编辑AI任务" width="1120px" class="use-case-dialog">
     <el-form ref="useCaseFormRef" label-position="top">
-      <div class="use-case-editor">
-        <div class="use-case-side">
-          <section class="editor-section">
-            <h3>基础信息</h3>
-            <el-form-item label="任务编码">
-              <el-input v-model="useCaseForm.useCaseCode" disabled />
-            </el-form-item>
-            <el-form-item label="任务名称">
-              <el-input v-model="useCaseForm.useCaseName" />
-            </el-form-item>
+      <div class="use-case-tabs-card">
+        <el-tabs v-model="useCaseEditTab" class="use-case-tabs">
+          <el-tab-pane label="基础信息" name="basic">
+            <div class="form-grid two-grid">
+              <el-form-item label="任务编码">
+                <el-input v-model="useCaseForm.useCaseCode" disabled />
+              </el-form-item>
+              <el-form-item label="任务名称">
+                <el-input v-model="useCaseForm.useCaseName" />
+              </el-form-item>
+            </div>
             <el-form-item label="执行能力">
-              <el-input :model-value="useCaseCapabilityText(useCaseForm.useCaseCode)" disabled />
+              <el-input :model-value="useCaseCapabilityText(useCaseForm.capability)" disabled />
             </el-form-item>
             <div class="form-grid two-grid">
               <el-form-item label="领域">
@@ -1240,10 +1388,12 @@ onMounted(async () => {
             <el-form-item label="描述">
               <el-input v-model="useCaseForm.description" type="textarea" :rows="3" resize="none" />
             </el-form-item>
-          </section>
+            <el-form-item label="备注">
+              <el-input v-model="useCaseForm.remark" type="textarea" :rows="2" resize="none" />
+            </el-form-item>
+          </el-tab-pane>
 
-          <section class="editor-section">
-            <h3>调用参数</h3>
+          <el-tab-pane label="调用参数" name="invocation">
             <div class="form-grid three-grid compact-grid">
               <el-form-item label="接入供应商">
                 <el-select v-model="useCaseForm.uiProviderVendor" clearable filterable placeholder="直连" style="width: 100%" @change="handleUseCaseProviderParamChange('vendor')">
@@ -1261,74 +1411,63 @@ onMounted(async () => {
                 </el-select>
               </el-form-item>
             </div>
-            <div v-if="selectedProvider" class="selected-provider">
-              <el-tag :type="selectedProvider.enabled ? 'success' : 'info'">{{ channelTypeText(selectedProvider.channelType) }}</el-tag>
-              <span>{{ selectedProvider.providerName }}</span>
-              <span class="sub-text">{{ selectedProvider.providerCode }}</span>
-              <span class="sub-text">默认：{{ selectedProvider.defaultModel || '-' }} / {{ reasoningText(selectedProvider.defaultReasoningLevel) }} / {{ speedText(selectedProvider.defaultSpeedMode) }} / {{ selectedProvider.callTimeoutSeconds || '-' }}s</span>
-            </div>
-            <div v-else class="unmatched-provider">当前参数没有匹配到已启用的接入配置，请先在“接入配置”中维护对应组合和通道。</div>
-            <el-alert v-if="selectedProviderIsZCode" title="当前 ZCode 接入支持文本任务；需要处理图片时，请选择支持图片的接入。" type="info" :closable="false" />
+            <div v-if="!selectedProvider" class="unmatched-provider">{{ unmatchedProviderMessage }}</div>
             <div class="section-subtitle">任务级覆盖（可选）</div>
             <el-form-item label="模型覆盖">
-              <el-select v-model="useCaseForm.model" clearable filterable allow-create placeholder="留空继承通道默认模型" style="width: 100%">
-                <el-option v-for="item in modelOptions" :key="item.code" :label="item.label" :value="item.code" />
+              <el-select v-model="useCaseForm.model" clearable filterable allow-create :placeholder="inheritModelPlaceholder"
+                :loading="selectedProvider?.channelType === 'CLI' && useCaseCliCatalog.loading" style="width: 100%">
+                <el-option v-for="item in useCaseModelOptions" :key="item.code" :label="item.label" :value="item.code" />
               </el-select>
             </el-form-item>
+            <el-alert v-if="useCaseCliCatalog.error" :title="useCaseCliCatalog.error" type="warning" :closable="false" />
             <div class="form-grid three-grid">
               <el-form-item label="推理强度覆盖">
-                <el-input v-if="selectedProviderIsZCode" v-model="useCaseForm.reasoningLevel" clearable placeholder="继承默认值，或填写模型支持的原始档位" />
-                <el-select v-else v-model="useCaseForm.reasoningLevel" clearable filterable placeholder="继承通道默认值" style="width: 100%">
+                <el-select v-if="selectedProvider?.channelType === 'CLI'" v-model="useCaseForm.reasoningLevel" clearable filterable
+                  :allow-create="selectedProviderIsZCode" :placeholder="inheritReasoningPlaceholder"
+                  :loading="useCaseCliCatalog.loading" style="width: 100%">
+                  <el-option v-if="useCaseReasoningMissing" :value="useCaseForm.reasoningLevel"
+                    :label="`${useCaseForm.reasoningLevel}${useCaseCliCatalog.catalog ? '（当前不可选）' : '（原配置）'}`" disabled />
+                  <el-option v-for="item in useCaseReasoningOptions" :key="item.code" :label="item.label" :value="item.code" :title="item.title" />
+                </el-select>
+                <el-select v-else v-model="useCaseForm.reasoningLevel" clearable filterable :placeholder="inheritReasoningPlaceholder" style="width: 100%">
                   <el-option v-for="item in reasoningOptions" :key="item.code" :label="item.label" :value="item.code" />
                 </el-select>
               </el-form-item>
               <el-form-item label="速度覆盖">
-                <el-select v-model="useCaseForm.speedMode" clearable filterable placeholder="继承通道默认值" style="width: 100%">
+                <el-select v-model="useCaseForm.speedMode" clearable filterable :placeholder="inheritSpeedPlaceholder" style="width: 100%">
                   <el-option v-for="item in useCaseSpeedOptions" :key="item.code" :label="item.label" :value="item.code" />
                 </el-select>
               </el-form-item>
               <el-form-item label="总调用超时覆盖">
-                <el-input-number v-model="useCaseForm.timeoutSeconds" :min="1" :max="7200" placeholder="继承通道默认值" style="width: 100%" />
+                <el-input-number v-model="useCaseForm.timeoutSeconds" :min="1" :max="7200" :placeholder="inheritTimeoutPlaceholder" style="width: 100%" />
               </el-form-item>
             </div>
-            <div class="effective-config-grid">
-              <div><span>最终模型</span><strong>{{ effectivePreview.model }}</strong><em>{{ sourceText(effectivePreview.modelSource) }}</em></div>
-              <div><span>最终推理</span><strong>{{ effectivePreview.reasoning }}</strong><em>{{ sourceText(effectivePreview.reasoningSource) }}</em></div>
-              <div><span>最终速度</span><strong>{{ effectivePreview.speed }}</strong><em>{{ sourceText(effectivePreview.speedSource) }}</em></div>
-              <div><span>最终超时</span><strong>{{ effectivePreview.timeout ? `${effectivePreview.timeout}s` : '-' }}</strong><em>{{ sourceText(effectivePreview.timeoutSource) }}</em></div>
-            </div>
-          </section>
-        </div>
+          </el-tab-pane>
 
-        <div class="use-case-main">
-          <section class="editor-section">
-            <h3>输出约束</h3>
-            <div class="form-grid output-grid">
-              <el-form-item label="结构化输出">
-                <el-switch v-model="useCaseForm.jsonSchemaEnabled" active-text="Schema" inactive-text="普通文本" />
-              </el-form-item>
-              <el-form-item label="Schema路径">
-                <el-input v-model="useCaseForm.schemaClasspath" placeholder="classpath 下的 JSON Schema 路径" />
-              </el-form-item>
-              <el-form-item label="提示词版本">
-                <el-input :model-value="`v${useCaseForm.promptVersion || 1} ${shortChecksum(useCaseForm.promptChecksum)}`" disabled />
-              </el-form-item>
-            </div>
-          </section>
-
-          <section class="editor-section prompt-section">
-            <h3>提示词</h3>
+          <el-tab-pane label="提示词" name="prompt">
             <el-form-item label="变量说明">
               <el-input v-model="useCaseForm.promptVariablesDesc" type="textarea" :rows="3" resize="none" />
             </el-form-item>
             <el-form-item label="提示词模板">
               <el-input v-model="useCaseForm.promptTemplate" type="textarea" :autosize="{ minRows: 16, maxRows: 24 }" class="prompt-input" />
             </el-form-item>
-            <el-form-item label="备注">
-              <el-input v-model="useCaseForm.remark" type="textarea" :rows="2" resize="none" />
+            <el-form-item label="提示词版本">
+              <el-input :model-value="`v${useCaseForm.promptVersion || 1} ${shortChecksum(useCaseForm.promptChecksum)}`" disabled />
             </el-form-item>
-          </section>
-        </div>
+          </el-tab-pane>
+
+          <el-tab-pane label="输出约束" name="output">
+            <div class="form-grid two-grid">
+              <el-form-item label="结构化输出">
+                <el-switch v-model="useCaseForm.jsonSchemaEnabled" active-text="Schema" inactive-text="普通文本" />
+              </el-form-item>
+              <el-form-item label="Schema路径">
+                <el-input v-model="useCaseForm.schemaClasspath" placeholder="classpath 下的 JSON Schema 路径" />
+              </el-form-item>
+            </div>
+            <div class="output-hint">结构化输出关闭时忽略 Schema 路径；提示词模板的输出要求请在"提示词"页签维护。</div>
+          </el-tab-pane>
+        </el-tabs>
       </div>
     </el-form>
     <template #footer>
@@ -1341,15 +1480,6 @@ onMounted(async () => {
 <style scoped>
 .ai-config-page {
   padding: 24px;
-}
-
-.header-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.ai-tabs {
-  margin-top: 16px;
 }
 
 .filter-form {
@@ -1376,6 +1506,12 @@ onMounted(async () => {
   display: flex;
   justify-content: flex-end;
   padding-top: 14px;
+}
+
+.provider-toolbar {
+  display: flex;
+  justify-content: flex-start;
+  padding-bottom: 12px;
 }
 
 .form-grid {
@@ -1414,6 +1550,17 @@ onMounted(async () => {
   padding: 12px 16px;
   border-bottom: 1px solid #e5e7eb;
   background: #f8fafc;
+}
+
+.model-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.model-refresh {
+  cursor: pointer;
+  color: var(--el-color-primary);
 }
 
 .channel-body {
@@ -1465,34 +1612,15 @@ onMounted(async () => {
   background: #f6f8fb;
 }
 
-.use-case-editor {
-  display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
-}
-
-.use-case-side,
-.use-case-main {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
-}
-
-.editor-section {
-  padding: 14px 14px 2px;
+.use-case-tabs-card {
+  padding: 0 16px 16px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #fff;
 }
 
-.editor-section h3 {
-  margin: 0 0 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #edf0f3;
-  color: #111827;
-  font-size: 14px;
+.use-case-tabs-card :deep(.el-tabs__header) {
+  margin-bottom: 16px;
 }
 
 .compact-grid {
@@ -1521,31 +1649,10 @@ onMounted(async () => {
   font-weight: 600;
 }
 
-.effective-config-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin: 4px 0 12px;
-}
-
-.effective-config-grid > div {
-  display: grid;
-  gap: 3px;
-  padding: 9px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #f8fafc;
-}
-
-.effective-config-grid span,
-.effective-config-grid em {
+.output-hint {
+  margin-top: 2px;
   color: #8492a6;
-  font-size: 11px;
-  font-style: normal;
-}
-
-.output-grid {
-  grid-template-columns: 150px minmax(0, 1fr) 190px;
+  font-size: 12px;
 }
 
 .prompt-input :deep(.el-textarea__inner) {
@@ -1556,9 +1663,9 @@ onMounted(async () => {
 }
 
 @media (max-width: 1180px) {
-  .use-case-editor,
   .provider-basic-grid,
-  .output-grid {
+  .form-grid.two-grid,
+  .form-grid.three-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -117,7 +117,7 @@ watch(businessLineDemandType, () => {
   <div>
     <div class="page-header">
       <div>
-        <p class="page-desc">按需求阶段和业务线快速查看未启动、开发中、测试中和待上线的事项。</p>
+        <p class="page-desc">按需求阶段和业务线快速查看未启动、开发中、测试中、待上线和已暂停的事项。</p>
       </div>
       <el-button
         type="primary"
@@ -129,16 +129,19 @@ watch(businessLineDemandType, () => {
       </el-button>
     </div>
 
-    <el-row v-loading="loading" :gutter="18">
-      <el-col v-for="card in demandCards" :key="card.key" :xs="24" :sm="12" :lg="6">
-        <div class="page-card metric-card" :class="card.className">
-          <div class="metric-label">{{ card.label }}</div>
-          <div class="metric-value">{{ card.value }}</div>
-          <div class="metric-note">{{ card.note }}</div>
-          <div class="metric-statuses">{{ card.statuses.join(' / ') }}</div>
-        </div>
-      </el-col>
-    </el-row>
+    <div v-loading="loading" class="metric-card-row">
+      <div
+        v-for="card in demandCards"
+        :key="card.key"
+        class="page-card metric-card"
+        :class="card.className"
+      >
+        <div class="metric-label">{{ card.label }}</div>
+        <div class="metric-value">{{ card.value }}</div>
+        <div class="metric-note">{{ card.note }}</div>
+        <div class="metric-statuses">{{ card.statuses.join(' / ') }}</div>
+      </div>
+    </div>
 
     <el-row :gutter="18" class="dashboard-section">
       <el-col :span="24">
@@ -146,7 +149,7 @@ watch(businessLineDemandType, () => {
           <div class="section-header">
             <div>
               <h3>需求统计</h3>
-              <span>当前范围：{{ businessLineFilterLabel }}，共 {{ businessLineRecordsCount }} 个需求；待上线包含待验收和待上线</span>
+              <span>当前范围：{{ businessLineFilterLabel }}，共 {{ businessLineRecordsCount }} 个需求；待上线包含待验收和待上线；已暂停单独统计</span>
             </div>
             <el-radio-group v-model="businessLineDemandType" class="stats-filter" size="small">
               <el-radio-button
@@ -164,6 +167,7 @@ watch(businessLineDemandType, () => {
             <el-table-column prop="developingCount" label="开发中" width="100" align="right" />
             <el-table-column prop="testingCount" label="测试中" width="100" align="right" />
             <el-table-column prop="pendingReleaseCount" label="待上线" width="100" align="right" />
+            <el-table-column prop="pausedCount" label="已暂停" width="100" align="right" />
             <el-table-column prop="totalCount" label="阶段合计" width="110" align="right" />
             <el-table-column prop="demandCount" label="需求数" width="100" align="right" />
             <el-table-column label="需求占比" width="110" align="right">
@@ -215,21 +219,29 @@ watch(businessLineDemandType, () => {
   padding: 24px;
 }
 
+.metric-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
 .metric-card {
-  min-height: 188px;
+  flex: 1 1 0;
+  min-width: 180px;
+  padding: 14px 16px;
   border: 1px solid transparent;
   overflow: hidden;
   position: relative;
-  box-shadow: 0 18px 34px rgb(15 23 42 / 8%);
+  box-shadow: 0 12px 24px rgb(15 23 42 / 8%);
 }
 
 .metric-card::after {
   content: '';
   position: absolute;
-  right: -38px;
-  top: -42px;
-  width: 128px;
-  height: 128px;
+  right: -26px;
+  top: -28px;
+  width: 88px;
+  height: 88px;
   border-radius: 999px;
   opacity: 0.18;
 }
@@ -270,30 +282,40 @@ watch(businessLineDemandType, () => {
   background: #f97316;
 }
 
+.metric-card--paused {
+  background: linear-gradient(135deg, #f5f3ff 0%, #ddd6fe 100%);
+  border-color: #c4b5fd;
+}
+
+.metric-card--paused::after {
+  background: #7c3aed;
+}
+
 .metric-label {
   color: #475569;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
 }
 
 .metric-value {
-  margin-top: 10px;
-  font-size: 44px;
+  margin-top: 6px;
+  font-size: 30px;
   font-weight: 900;
   color: #0f172a;
   line-height: 1;
 }
 
 .metric-note {
-  margin-top: 14px;
+  margin-top: 8px;
   color: #475569;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .metric-statuses {
-  margin-top: 12px;
+  margin-top: 6px;
   color: #64748b;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .dashboard-section {
@@ -381,6 +403,12 @@ h3 {
   color: #c2410c;
   background: #ffedd5;
   border-color: #fdba74;
+}
+
+.stage-tag--paused {
+  color: #6d28d9;
+  background: #ede9fe;
+  border-color: #c4b5fd;
 }
 
 .stage-tag--status {

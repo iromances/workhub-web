@@ -2,8 +2,16 @@ import type { MenuItem } from '@/types/menu'
 
 export const menuItems: MenuItem[] = [
   { key: 'dashboard', label: '工作台', path: '/dashboard', permission: 'dashboard:view' },
-  { key: 'agents', label: 'Agent 工作台', path: '/agents', permission: 'agent:view' },
-  { key: 'demands', label: '需求管理', path: '/demands', permission: 'intake:record:view' },
+  { key: 'agents', label: '数字员工', path: '/agents', permission: 'agent:view' },
+  {
+    key: 'demands',
+    label: '需求管理',
+    path: '/demands',
+    children: [
+      { key: 'demands-list', label: '需求清单', path: '/demands/list', permission: 'intake:record:view' },
+      { key: 'demands-board', label: '需求看板', path: '/demands/board', permission: 'intake:record:view' },
+    ],
+  },
   {
     key: 'ops',
     label: '运维',
@@ -12,7 +20,6 @@ export const menuItems: MenuItem[] = [
       { key: 'ops-monitors', label: '业务监测', path: '/ops/monitors', permission: 'ops:monitor:view' },
       { key: 'ops-accounting', label: '账务监测', path: '/ops/accounting', permission: 'ops:accounting:view' },
       { key: 'ops-system-alerts', label: '系统预警', path: '/ops/system-alerts', permission: 'ops:system-alert:view' },
-      { key: 'ops-mcp-resources', label: 'MCP', path: '/ops/mcp-resources', permission: 'ops:mcp-resource:view' },
     ],
   },
   {
@@ -37,6 +44,10 @@ export const menuItems: MenuItem[] = [
       { key: 'system-users', label: '账号管理', path: '/system/users', permission: 'system:user:view' },
       { key: 'system-roles', label: '角色管理', path: '/system/roles', permission: 'system:role:view' },
       { key: 'system-audits', label: '权限审计', path: '/system/audits', permission: 'system:audit:view' },
+      { key: 'system-integrations', label: '系统集成', path: '/system/integrations', permission: 'system:integration:view' },
+      { key: 'system-jobs', label: 'Job 管理', path: '/system/jobs', permission: 'ops:job:view' },
+      { key: 'system-mcp-resources', label: 'MCP', path: '/system/mcp-resources', permission: 'ops:mcp-resource:view' },
+      { key: 'system-function-call', label: 'Function Call', path: '/system/function-call', permission: 'ops:function-call:view' },
     ],
   },
 ]

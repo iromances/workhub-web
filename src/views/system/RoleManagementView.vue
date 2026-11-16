@@ -201,16 +201,13 @@ onMounted(async () => {
 
 <template>
   <div class="page-card table-card">
-    <div class="page-header">
-      <el-button v-if="canCreate" type="primary" @click="openCreate">新增角色</el-button>
-    </div>
-
     <el-form inline class="filter-form" @submit.prevent="loadRoles">
       <el-form-item label="关键字">
         <el-input v-model="filters.keyword" clearable placeholder="角色编码 / 名称" @keyup.enter="loadRoles" />
       </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="loadRoles">查询</el-button>
+        <el-button v-if="canCreate" type="primary" @click="openCreate">新增角色</el-button>
       </el-form-item>
     </el-form>
 

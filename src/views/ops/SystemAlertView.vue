@@ -647,7 +647,7 @@ function markCleanupTaskStatusQueryFailed(taskId: number) {
 function startCleanupTaskNotificationCountdown(taskId: number) {
   const entry = cleanupTaskNotifications.get(taskId)
   if (!entry || entry.countdownTimer) return
-  entry.state.countdown = 10
+  entry.state.countdown = 5
   entry.countdownTimer = setInterval(() => {
     if (entry.state.countdown === null) return
     entry.state.countdown -= 1

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 
 import {
   createSystemConfig,
@@ -11,6 +12,7 @@ import { useAuthStore } from '@/stores/auth'
 import type { SysConfigItem } from '@/types/work-item'
 
 const authStore = useAuthStore()
+const route = useRoute()
 const loading = ref(false)
 const submitting = ref(false)
 const dialogVisible = ref(false)
@@ -107,7 +109,14 @@ async function submit() {
   }
 }
 
-onMounted(loadConfigs)
+// 支持从系统集成详情等入口带 configGroup 预填筛选并直接查询
+onMounted(() => {
+  const configGroup = route.query.configGroup
+  if (typeof configGroup === 'string' && configGroup.trim()) {
+    filters.configGroup = configGroup.trim()
+  }
+  loadConfigs()
+})
 </script>
 
 <template>
@@ -116,7 +125,6 @@ onMounted(loadConfigs)
       <div>
         <p class="page-desc">配置 GitLab、ELK 等系统参数；密码、Token、API Key 等敏感值只脱敏展示。</p>
       </div>
-      <el-button v-if="canCreate" type="primary" @click="openCreate">新增配置</el-button>
     </div>
 
     <el-alert
@@ -152,6 +160,7 @@ onMounted(loadConfigs)
       </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="loadConfigs">查询</el-button>
+        <el-button v-if="canCreate" type="primary" @click="openCreate">新增配置</el-button>
       </el-form-item>
     </el-form>
 

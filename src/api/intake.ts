@@ -1,5 +1,5 @@
 import type { ApiResponse, PageResponse } from '@/types/http'
-import type { DemandTypeFilter, DevelopmentAnalysisResponse, IntakeBusinessLineUpdateRequest, IntakeClarificationAnalysisResponse, IntakeDashboard, IntakeDetail, IntakeRequirementFolder, IntakeStageActionRequest, IntakeSummary, IntakeTodo, IntakeTodoCreateRequest, IntakeTodoStatusRequest, IntakeTodoUpdateRequest } from '@/types/work-item'
+import type { DemandTypeFilter, DevelopmentAnalysisResponse, IntakeAiDevelopment, IntakeBoard, IntakeBoardGroupBy, IntakeBusinessLineUpdateRequest, IntakeClarificationAnalysisResponse, IntakeDashboard, IntakeDetail, IntakeRequirementFolder, IntakeStageActionRequest, IntakeSubmitTestReview, IntakeSummary, IntakeTodo, IntakeTodoCreateRequest, IntakeTodoStatusRequest, IntakeTodoUpdateRequest } from '@/types/work-item'
 
 import http from './http'
 export { buildIntakeTodoPath, buildIntakeTodoStatusPath, buildIntakeTodosPath } from './intakeTodoPaths'
@@ -24,6 +24,14 @@ export async function fetchIntakeRecords(params?: {
 
 export async function fetchIntakeDashboard(demandType: DemandTypeFilter = 'ALL'): Promise<IntakeDashboard> {
   const response = await http.get<ApiResponse<IntakeDashboard>>('/intake/dashboard', { params: { demandType } })
+  return response.data.data
+}
+
+export async function fetchIntakeBoard(
+  includeClosed = false,
+  groupBy: IntakeBoardGroupBy = 'demandOwner',
+): Promise<IntakeBoard> {
+  const response = await http.get<ApiResponse<IntakeBoard>>('/intake/board', { params: { includeClosed, groupBy } })
   return response.data.data
 }
 
@@ -80,6 +88,11 @@ export async function openIntakeDevelopmentPlanFolder(id: number): Promise<Intak
   return response.data.data
 }
 
+export async function rollbackIntakeStage(id: number, reason: string): Promise<IntakeDetail> {
+  const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/stage-rollback`, { reason })
+  return response.data.data
+}
+
 export async function advanceIntakeStage(id: number, request: IntakeStageActionRequest | FormData): Promise<IntakeDetail> {
   const isFormData = typeof FormData !== 'undefined' && request instanceof FormData
   const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/stage-actions`, request, isFormData ? {} : undefined)
@@ -131,9 +144,24 @@ export async function fetchDevelopmentAnalysis(id: number): Promise<DevelopmentA
   return normalizeDevelopmentAnalysis(response.data.data)
 }
 
+export async function fetchDevelopmentAnalysisHistory(id: number): Promise<DevelopmentAnalysisResponse[]> {
+  const response = await http.get<ApiResponse<DevelopmentAnalysisResponse[]>>(`/intake/${id}/development-analysis/history`)
+  return response.data.data || []
+}
+
+export async function startDevelopmentAnalysis(id: number): Promise<DevelopmentAnalysisResponse> {
+  const response = await http.post<ApiResponse<DevelopmentAnalysisResponse>>(`/intake/${id}/development-analysis`, undefined, { timeout: 0 })
+  return response.data.data
+}
+
 export async function fetchClarificationAnalysis(id: number): Promise<IntakeClarificationAnalysisResponse | null> {
   const response = await http.get<ApiResponse<IntakeClarificationAnalysisResponse | null>>(`/intake/${id}/clarification-analysis`)
   return response.data.data
+}
+
+export async function fetchClarificationAnalysisHistory(id: number): Promise<IntakeClarificationAnalysisResponse[]> {
+  const response = await http.get<ApiResponse<IntakeClarificationAnalysisResponse[]>>(`/intake/${id}/clarification-analysis/history`)
+  return response.data.data || []
 }
 
 export async function startClarificationAnalysis(id: number): Promise<IntakeClarificationAnalysisResponse> {
@@ -208,9 +236,28 @@ export async function confirmDevelopmentAnalysis(id: number): Promise<void> {
   await http.post<ApiResponse<unknown>>(`/intake/${id}/development-analysis/confirm`)
 }
 
-export async function syncIntakeZentao(id: number): Promise<void> {
-  await http.post<ApiResponse<unknown>>(`/intake/${id}/zentao-sync`)
+export interface DevelopmentZentaoSyncItemResult {
+  title: string
+  zentaoTaskId: string | null
+  zentaoTaskUrl: string | null
+  action: 'CREATED' | 'UPDATED' | 'CANCELLED' | 'FAILED'
+  error: string | null
 }
+
+export interface DevelopmentZentaoSyncResponse {
+  intakeId: number
+  syncStatus: 'SYNCED' | 'PARTIAL' | 'FAILED'
+  summary: string
+  items: DevelopmentZentaoSyncItemResult[]
+}
+
+export async function syncDevelopmentZentao(id: number): Promise<DevelopmentZentaoSyncResponse> {
+  const response = await http.post<ApiResponse<DevelopmentZentaoSyncResponse>>(
+    `/intake/${id}/development-analysis/zentao-sync`,
+  )
+  return response.data.data
+}
+
 
 export async function deleteIntake(id: number): Promise<void> {
   await http.delete<ApiResponse<void>>(`/intake/${id}`)
@@ -249,4 +296,32 @@ function normalizeDevelopmentAnalysis<T extends DevelopmentAnalysisResponse | nu
     draft.projectGroup = draft.businessLine
   }
   return analysis
+}
+
+export async function fetchIntakeAiDevelopment(id: number): Promise<IntakeAiDevelopment | null> {
+  const response = await http.get<ApiResponse<IntakeAiDevelopment | null>>(`/intake/${id}/ai-development`)
+  return response.data.data
+}
+
+export async function retryIntakeAiDevelopment(id: number): Promise<IntakeAiDevelopment> {
+  const response = await http.post<ApiResponse<IntakeAiDevelopment>>(`/intake/${id}/ai-development/retry`)
+  return response.data.data
+}
+
+export async function fetchSubmitTestReview(id: number): Promise<IntakeSubmitTestReview | null> {
+  const response = await http.get<ApiResponse<IntakeSubmitTestReview | null>>(`/intake/${id}/submit-test-review`)
+  return response.data.data
+}
+
+export async function startSubmitTestReview(id: number): Promise<IntakeSubmitTestReview> {
+  const response = await http.post<ApiResponse<IntakeSubmitTestReview>>(`/intake/${id}/submit-test-review`)
+  return response.data.data
+}
+
+export async function confirmSubmitTest(
+  id: number,
+  request: { testOwnerUserName: string; environmentCode?: string; forceConfirm: boolean; skipAiReview?: boolean; triggerJenkins?: boolean; actualEffort?: string; actualCompletedTime?: string; occurredAt?: string; jenkinsJobName?: string },
+): Promise<IntakeSubmitTestReview> {
+  const response = await http.post<ApiResponse<IntakeSubmitTestReview>>(`/intake/${id}/submit-test-review/confirm`, request)
+  return response.data.data
 }

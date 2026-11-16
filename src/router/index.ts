@@ -27,7 +27,13 @@ const router = createRouter({
           path: 'agents',
           name: 'agent-workbench',
           component: () => import('@/views/agent/AgentWorkbenchView.vue'),
-          meta: { title: 'Agent 工作台', activeMenu: '/agents', permission: 'agent:view' },
+          meta: { title: '数字员工', activeMenu: '/agents', permission: 'agent:view' },
+        },
+        {
+          path: 'agent-issues',
+          name: 'agent-issue-center',
+          component: () => import('@/views/agent/AgentIssueCenterView.vue'),
+          meta: { title: '工单中心', activeMenu: '/agent-issues', permission: 'agent:view' },
         },
         {
           path: 'projects',
@@ -94,6 +100,30 @@ const router = createRouter({
           meta: { title: '权限审计', activeMenu: '/system/audits', permission: 'system:audit:view' },
         },
         {
+          path: 'system/integrations',
+          name: 'system-integrations',
+          component: () => import('@/views/system/IntegrationView.vue'),
+          meta: { title: '系统集成', activeMenu: '/system/integrations', permission: 'system:integration:view' },
+        },
+        {
+          path: 'system/jobs',
+          name: 'system-jobs',
+          component: () => import('@/views/system/JobManagementView.vue'),
+          meta: { title: 'Job 管理', activeMenu: '/system/jobs', permission: 'ops:job:view' },
+        },
+        {
+          path: 'system/mcp-resources',
+          name: 'system-mcp-resources',
+          component: () => import('@/views/system/McpResourceView.vue'),
+          meta: { title: 'MCP', activeMenu: '/system/mcp-resources', permission: 'ops:mcp-resource:view' },
+        },
+        {
+          path: 'system/function-call',
+          name: 'system-function-call',
+          component: () => import('@/views/system/FunctionCallView.vue'),
+          meta: { title: 'Function Call', activeMenu: '/system/function-call', permission: 'ops:function-call:view' },
+        },
+        {
           path: 'ops',
           redirect: '/ops/monitors',
         },
@@ -102,6 +132,14 @@ const router = createRouter({
           name: 'ops-monitors',
           component: () => import('@/views/ops/OpsMonitorView.vue'),
           meta: { title: '业务监测', activeMenu: '/ops/monitors', permission: 'ops:monitor:view' },
+        },
+        {
+          path: 'ops/jobs',
+          redirect: '/system/jobs',
+        },
+        {
+          path: 'ops/function-call',
+          redirect: '/system/function-call',
         },
         {
           path: 'ops/accounting',
@@ -117,20 +155,28 @@ const router = createRouter({
         },
         {
           path: 'ops/mcp-resources',
-          name: 'ops-mcp-resources',
-          component: () => import('@/views/mcp/McpResourceView.vue'),
-          meta: { title: 'MCP', activeMenu: '/ops/mcp-resources', permission: 'ops:mcp-resource:view' },
+          redirect: '/system/mcp-resources',
         },
         {
           path: 'mcp-resources',
-          redirect: '/ops/mcp-resources',
+          redirect: '/system/mcp-resources',
         },
         {
           path: 'demands',
+          redirect: '/demands/list',
+        },
+        {
+          path: 'demands/list',
           alias: ['/intake'],
-          name: 'demands',
+          name: 'demands-list',
           component: () => import('@/views/intake/IntakeListView.vue'),
-          meta: { title: '需求管理', activeMenu: '/demands', permission: 'intake:record:view' },
+          meta: { title: '需求清单', activeMenu: '/demands/list', permission: 'intake:record:view' },
+        },
+        {
+          path: 'demands/board',
+          name: 'demands-board',
+          component: () => import('@/views/intake/IntakeBoardView.vue'),
+          meta: { title: '需求看板', activeMenu: '/demands/board', permission: 'intake:record:view' },
         },
         {
           path: 'work-items',

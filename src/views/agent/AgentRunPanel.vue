@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { cancelAgentRun, replyToAgentRun, retryAgentRun } from '@/api/agent'
+import { cancelAgentRun, deleteAgentRun, replyToAgentRun, retryAgentRun } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
 import type { AgentRun, AgentRunDetail } from '@/types/agent'
 import AgentRunAcceptancePanel from './AgentRunAcceptancePanel.vue'
+import AgentRunIssuesPanel from './AgentRunIssuesPanel.vue'
 import AgentChangesPanel from './AgentChangesPanel.vue'
 import AgentRunReconciliationPanel from './AgentRunReconciliationPanel.vue'
 import { errorText, eventLabels, eventSummary, localTime, prettyPayload, requestKey, statusLabels, statusTone } from './agentPresentation'
@@ -17,12 +18,58 @@ const error = ref('')
 const reply = ref('')
 const eventPage = ref(1)
 const tab = ref('result')
+const resultTab = ref('report')
 let replyAttempt: { text: string; key: string } | null = null
 let retryKey = requestKey()
 const run = computed(() => props.detail.run)
 const canOperate = computed(() => auth.hasPermission('agent:task:operate'))
+const canManage = computed(() => auth.hasPermission('agent:manage'))
+const deletable = computed(() => !['QUEUED', 'RUNNING', 'CANCELLING'].includes(run.value.status))
 const terminal = computed(() => ['COMPLETED', 'FAILED', 'CANCELLED'].includes(run.value.status))
 const eventRows = computed(() => props.detail.events.slice((eventPage.value - 1) * 20, eventPage.value * 20))
+
+function escapeHtml(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+function downloadReport() {
+  const objective = props.detail.specification.objective || '数字员工运行报告'
+  const title = props.detail.configuration?.name ? `${props.detail.configuration.name} · ${objective}` : objective
+  const scopes = (props.detail.specification.scopes || []).map(scope => `${scope.businessLineCode}/${scope.environmentCode}`).join('、')
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>${escapeHtml(title)}</title>
+<style>
+body{font-family:'Helvetica Neue',Arial,'PingFang SC','Microsoft YaHei',sans-serif;margin:0;padding:40px;background:#f7f8fa;color:#1f2937;line-height:1.7}
+.report{max-width:800px;margin:0 auto;background:#fff;padding:40px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+h1{font-size:20px;margin:0 0 8px}
+.meta{color:#6b7280;font-size:12px;border-bottom:1px solid #e5e7eb;padding-bottom:16px;margin-bottom:24px}
+.meta span{display:inline-block;margin-right:16px}
+pre{white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:14px;margin:0}
+</style>
+</head>
+<body>
+<div class="report">
+<h1>${escapeHtml(title)}</h1>
+<div class="meta">
+<span>状态：${escapeHtml(statusLabels[run.value.status] || run.value.status)}</span>
+<span>范围：${escapeHtml(scopes || '未指定')}</span>
+<span>开始：${escapeHtml(localTime(run.value.createdAt))}</span>
+<span>耗时：${Math.floor(run.value.elapsedMillis / 1000)} 秒</span>
+<span>AI：${escapeHtml(props.detail.providerBinding.channelType)}${props.detail.configuration?.model ? ' · ' + escapeHtml(props.detail.configuration.model) : ''}</span>
+</div>
+<pre>${escapeHtml(run.value.resultText || '')}</pre>
+</div>
+</body>
+</html>`
+  const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${(props.detail.configuration?.name || '报告').replace(/[\\/:*?"<>|]/g, '')}-${run.value.createdAt.slice(0, 10)}.html`
+  link.click()
+  URL.revokeObjectURL(url)
+}
 watch(() => props.detail.run.id, () => { reply.value = ''; error.value = ''; eventPage.value = 1; replyAttempt = null; retryKey = requestKey(); tab.value = 'result' })
 async function cancel() {
   const target = run.value
@@ -38,6 +85,18 @@ async function retry() {
   error.value = ''
   try { const created = await retryAgentRun(run.value, retryKey); retryKey = requestKey(); emit('newRun', created) }
   catch (cause) { error.value = errorText(cause); emit('refresh') } finally { busy.value = false }
+}
+async function removeRun() {
+  try {
+    await ElMessageBox.confirm('将物理删除该运行记录及其事件与产物（审计保留）。待核对的僵尸运行删除后立即释放其占用的全局并发额度。', `删除运行 ${run.value.id.slice(0, 8)}…`, { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+  } catch { return }
+  busy.value = true
+  error.value = ''
+  try {
+    await deleteAgentRun(run.value.taskId, run.value)
+    ElMessage.success('运行记录已删除')
+    emit('refresh')
+  } catch (cause) { error.value = errorText(cause) } finally { busy.value = false }
 }
 async function sendReply() {
   if (!reply.value.trim()) return
@@ -59,7 +118,14 @@ async function sendReply() {
   <section class="run-panel">
     <div class="run-heading">
       <div><el-tag :type="statusTone(run.status)">{{ statusLabels[run.status] || run.status }}</el-tag><span class="run-meta">{{ run.stepCount }} 次行动 · {{ Math.floor(run.elapsedMillis / 1000) }} 秒 · {{ localTime(run.createdAt) }}</span></div>
-      <div v-if="canOperate"><el-button v-if="!terminal && !run.cancelRequested" :disabled="busy" @click="cancel">停止运行</el-button><el-button v-if="run.retryAllowed" :loading="busy" @click="retry">重试</el-button></div>
+      <div>
+        <el-button v-if="run.resultText" @click="downloadReport">下载报告 (HTML)</el-button>
+        <template v-if="canOperate">
+          <el-button v-if="!terminal && !run.cancelRequested" :disabled="busy" @click="cancel">停止运行</el-button>
+          <el-button v-if="run.retryAllowed" :loading="busy" @click="retry">重试</el-button>
+        </template>
+        <el-button v-if="canManage && deletable" type="danger" plain :loading="busy" @click="removeRun">删除记录</el-button>
+      </div>
     </div>
     <p class="run-meta">本次 AI：{{ detail.providerBinding.channelType }} · {{ detail.configuration.model || '未记录模型' }} · 接入配置版本 {{ detail.providerBinding.configurationVersion }}</p>
     <p v-if="detail.specification.expectedArtifacts.some(kind => ['DEPLOYMENT', 'VERIFICATION'].includes(kind))" class="run-meta">本轮完成目标：{{ detail.specification.completionTargets?.length ? detail.specification.completionTargets.map(scope => `${scope.businessLineCode} / ${scope.environmentCode === 'TEST' ? '测试' : '生产'}`).join('、') : '尚未明确，请重新分派任务' }}</p>
@@ -69,14 +135,19 @@ async function sendReply() {
     <AgentRunReconciliationPanel :run="run" @refresh="emit('refresh')" />
     <el-tabs v-model="tab">
       <el-tab-pane label="结果与产物" name="result">
-        <pre v-if="run.resultText" class="result-text">{{ run.resultText }}</pre>
-        <el-empty v-else description="尚未返回最终结果" :image-size="56" />
-        <div v-for="artifact in detail.artifacts" :key="artifact.id" class="artifact">
-          <strong>{{ artifact.kind === 'REPORT' ? '分析报告' : artifact.kind }}</strong>
-          <el-tag size="small" effect="plain">{{ artifact.provenance === 'AI_REPORT' ? 'AI 报告' : '执行证据' }}</el-tag>
-          <span class="run-meta">{{ localTime(artifact.createdAt) }}</span>
-          <details><summary>查看产物内容与校验值</summary><pre>{{ prettyPayload(artifact.payloadJson) }}</pre><code>{{ artifact.contentHash }}</code></details>
-        </div>
+        <el-tabs v-model="resultTab" class="result-subtabs">
+          <el-tab-pane label="结果报告" name="report">
+            <pre v-if="run.resultText" class="result-text">{{ run.resultText }}</pre>
+            <el-empty v-else description="尚未返回最终结果" :image-size="56" />
+            <div v-for="artifact in detail.artifacts" :key="artifact.id" class="artifact">
+              <strong>{{ artifact.kind === 'REPORT' ? '分析报告' : artifact.kind }}</strong>
+              <el-tag size="small" effect="plain">{{ artifact.provenance === 'AI_REPORT' ? 'AI 报告' : '执行证据' }}</el-tag>
+              <span class="run-meta">{{ localTime(artifact.createdAt) }}</span>
+              <details><summary>查看产物内容与校验值</summary><pre>{{ prettyPayload(artifact.payloadJson) }}</pre><code>{{ artifact.contentHash }}</code></details>
+            </div>
+          </el-tab-pane>
+          <AgentRunIssuesPanel :detail="detail" @refresh="emit('refresh')" />
+        </el-tabs>
       </el-tab-pane>
       <el-tab-pane v-if="auth.hasPermission('agent:task:view')" label="产物验收" name="acceptance">
         <AgentRunAcceptancePanel v-if="tab === 'acceptance'" :run="run" />
@@ -105,6 +176,7 @@ async function sendReply() {
 
 <style scoped>
 .run-panel { border-top: 1px solid #e5e7eb; padding-top: 20px; margin-top: 22px; }
+.result-subtabs :deep(.el-tabs__header) { margin-bottom: 12px; }
 .run-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .run-meta { color: #6b7280; font-size: 12px; margin-left: 10px; }
 .feedback { margin: 12px 0; }

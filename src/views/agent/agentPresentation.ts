@@ -51,3 +51,6 @@ export function eventSummary(value: string): string {
   } catch { /* 原文可在详情中查看。 */ }
   return ''
 }
+
+export const issueDomainLabels: Record<string, string> = { SYSTEM_ALERT: '系统预警', BUSINESS_MONITOR: '业务监测', ACCOUNTING: '账务监测' }
+export const issueStatusLabels: Record<string, string> = { OPEN: '开放', ANALYZED: '已分析', FIXING: '修复中', PENDING_REVIEW: '待审核', TESTING: '测试中', FIXED: '已修复', REJECTED: '已拒绝', CLOSED: '已关闭' }

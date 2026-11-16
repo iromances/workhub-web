@@ -118,7 +118,6 @@ onMounted(loadDevelopers)
       <div>
         <p class="page-desc">维护任务评估负责人下拉框的独立人员资源，不和项目或业务线绑定。</p>
       </div>
-      <el-button v-if="canCreate" type="primary" @click="openCreate">新增研发人员</el-button>
     </div>
 
     <el-form inline class="filter-form" @submit.prevent="loadDevelopers">
@@ -132,6 +131,7 @@ onMounted(loadDevelopers)
       </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="loadDevelopers">查询</el-button>
+        <el-button v-if="canCreate" type="primary" @click="openCreate">新增研发人员</el-button>
       </el-form-item>
     </el-form>
 

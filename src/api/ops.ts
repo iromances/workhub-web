@@ -1,5 +1,7 @@
 import type { ApiResponse, PageResponse } from '@/types/http'
 import type {
+  MqDashboard,
+  MqMessagePage,
   OpsMonitor,
   OpsMonitorCheckResult,
   OpsMonitorSaveRequest,
@@ -30,6 +32,8 @@ export async function fetchOpsMonitors(params?: {
   environmentCode?: string
   keyword?: string
   enabledOnly?: boolean
+  lastStatus?: string
+  enabled?: boolean
 }): Promise<OpsMonitor[]> {
   const response = await http.get<ApiResponse<PageResponse<OpsMonitor>>>('/ops/monitors', { params })
   return response.data.data.items
@@ -58,6 +62,8 @@ export async function fetchXxlJobDashboard(params?: {
   businessLineCode?: string
   environmentCode?: string
   enabledOnly?: boolean
+  lastStatus?: string
+  enabled?: boolean
 }): Promise<XxlJobDashboard[]> {
   const response = await http.get<ApiResponse<PageResponse<XxlJobDashboard>>>('/ops/monitors/xxl-job/dashboard', { params })
   return response.data.data.items
@@ -81,7 +87,7 @@ export async function fetchXxlJobDetail(
     pageSize?: number
     author?: string
     executorAppName?: string
-    logStatus?: 'ALL' | 'FAILED'
+    logStatus?: 'ALL' | 'ABNORMAL' | 'SUCCESS' | 'RUNNING' | 'STUCK' | 'EXECUTION_FAILED'
   },
 ): Promise<XxlJobDashboard> {
   const response = await http.get<ApiResponse<XxlJobDashboard>>(`/ops/monitors/${id}/xxl-job/detail`, { params })
@@ -97,10 +103,51 @@ export async function fetchXxlJobLogs(
     pageSize?: number
     author?: string
     executorAppName?: string
-    logStatus?: 'ALL' | 'FAILED'
+    logStatus?: 'ALL' | 'ABNORMAL' | 'SUCCESS' | 'RUNNING' | 'STUCK' | 'EXECUTION_FAILED'
   },
 ): Promise<XxlJobLogPage> {
   const response = await http.get<ApiResponse<XxlJobLogPage>>(`/ops/monitors/${id}/xxl-job/logs`, { params })
+  return response.data.data
+}
+
+export async function fetchMqDashboard(params?: {
+  businessLineCode?: string
+  environmentCode?: string
+  enabledOnly?: boolean
+}): Promise<MqDashboard[]> {
+  const response = await http.get<ApiResponse<PageResponse<MqDashboard>>>('/ops/monitors/mq/dashboard', { params })
+  return response.data.data.items
+}
+
+export async function fetchMqDetail(
+  id: number,
+  params?: {
+    startDate?: string
+    endDate?: string
+    page?: number
+    pageSize?: number
+    logType?: 'ALL' | 'SENDER' | 'RECEIVER'
+    exchangeKeyword?: string
+    queueKeyword?: string
+  },
+): Promise<MqDashboard> {
+  const response = await http.get<ApiResponse<MqDashboard>>(`/ops/monitors/${id}/mq/detail`, { params })
+  return response.data.data
+}
+
+export async function fetchMqMessages(
+  id: number,
+  params?: {
+    startDate?: string
+    endDate?: string
+    page?: number
+    pageSize?: number
+    logType?: 'ALL' | 'SENDER' | 'RECEIVER'
+    exchangeKeyword?: string
+    queueKeyword?: string
+  },
+): Promise<MqMessagePage> {
+  const response = await http.get<ApiResponse<MqMessagePage>>(`/ops/monitors/${id}/mq/messages`, { params })
   return response.data.data
 }
 

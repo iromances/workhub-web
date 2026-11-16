@@ -73,6 +73,7 @@ export interface AiProviderConnectionTestResult {
 
 export interface AiUseCaseConfig {
   id: number
+  version: number
   useCaseCode: string
   useCaseName: string
   domain: string
@@ -103,6 +104,10 @@ export interface AiUseCaseConfig {
   promptChecksum?: string
   enabled: boolean
   remark?: string
+  /** 后端 AiUseCaseDefinitions 下发；未注册的场景编码为 null */
+  capability?: string | null
+  allowedChannelTypes?: string[] | null
+  allowedCliTypes?: string[] | null
 }
 
 export interface AiUseCaseConfigRequest {
@@ -184,4 +189,12 @@ export interface CodexModelCatalog {
   models: CodexModelOption[]
   fetchedAt: string
   cached: boolean
+}
+
+export interface ZCodeModelCatalogRequest {
+  cliCommand: string
+  cliRuntimeCommand?: string
+  cliBuiltinConfigPath?: string
+  cliPersonalConfigPath?: string
+  forceRefresh?: boolean
 }

@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { DocumentCopy } from '@element-plus/icons-vue'
+import { CircleCheckFilled, CircleCloseFilled, Clock, DocumentCopy, EditPen, Loading, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import {
   appendIntakeAttachments,
   advanceIntakeStage,
+  rollbackIntakeStage,
+  confirmSubmitTest,
   createIntakeTodo,
   createUploadIntake,
   deleteIntakeAttachment,
@@ -13,10 +16,16 @@ import {
   deleteIntakeTodo,
   downloadAttachment,
   confirmDevelopmentAnalysis,
+  fetchIntakeAiDevelopment,
   fetchIntakeDetail,
   fetchIntakeRecords,
   fetchDevelopmentAnalysis,
+  fetchDevelopmentAnalysisHistory,
+  startDevelopmentAnalysis,
+  syncDevelopmentZentao,
   fetchClarificationAnalysis,
+  fetchClarificationAnalysisHistory,
+  fetchSubmitTestReview,
   generateIntakeSqlDraft,
   openIntakeDevelopmentPlanFolder,
   openIntakeRequirementFolder,
@@ -24,9 +33,10 @@ import {
   replyClarificationItem,
   replaceIntakeAttachment,
   resumeIntakeDemand,
+  retryIntakeAiDevelopment,
   retryIntakeEnrichment,
   startClarificationAnalysis,
-  syncIntakeZentao,
+  startSubmitTestReview,
   updateDevelopmentAnalysisDraft,
   updateIntakeBusinessLine,
   updateIntakeDevelopmentBranch,
@@ -39,7 +49,7 @@ import {
 import { fetchProjectGroups, fetchSelectableProjectInvolvedSystems } from '@/api/project'
 import { fetchDeveloperOptions } from '@/api/system-config'
 import { useAuthStore } from '@/stores/auth'
-import type { DevelopmentAnalysisResponse, DevelopmentWorkItemDraft, IntakeAttachment, IntakeClarificationAnalysisResponse, IntakeClarificationItem, IntakeDetail, IntakeSummary, IntakeTodo, ProjectGroup, ProjectInvolvedSystem, UserOption } from '@/types/work-item'
+import type { DevelopmentAnalysisResponse, DevelopmentWorkItemDraft, IntakeAiDevelopment, IntakeAttachment, IntakeClarificationAnalysisResponse, IntakeClarificationItem, IntakeDetail, IntakeSubmitTestReview, IntakeSummary, IntakeTodo, ProjectGroup, ProjectInvolvedSystem, UserOption } from '@/types/work-item'
 import { buildAcceptanceDateDisplay, buildReleaseDateDisplay, buildTestingDateDisplay } from './intakeDateColumns'
 import {
   resolveDevelopmentProjectGroupCandidate,
@@ -115,6 +125,16 @@ const prioritySubmitting = ref(false)
 const priorityTarget = ref<IntakeSummary | null>(null)
 const requirementTypeDialogVisible = ref(false)
 const requirementTypeSubmitting = ref(false)
+const aiDevelopment = ref<IntakeAiDevelopment | null>(null)
+const submitTestReview = ref<IntakeSubmitTestReview | null>(null)
+const submitTestReviewStarting = ref(false)
+const submitTestEnvironmentCode = ref('')
+const submitTestForceConfirm = ref(false)
+const submitTestReviewTimer = ref<number | null>(null)
+const submitTestJobName = ref('')
+const submitTestOwnerUserName = ref('')
+const submitTestAiReviewEnabled = ref(false)
+const submitTestJenkinsEnabled = ref(false)
 const sqlDraftSubmitting = ref(false)
 const todoFormVisible = ref(false)
 const todoFormSubmitting = ref(false)
@@ -125,8 +145,17 @@ const todoStatusSubmitting = ref(false)
 const statusEditingTodo = ref<IntakeTodo | null>(null)
 const deletingTodoId = ref<number | null>(null)
 const developmentAnalysis = ref<DevelopmentAnalysisResponse | null>(null)
+const developmentHistory = ref<DevelopmentAnalysisResponse[]>([])
+const developmentRoundDialogVisible = ref(false)
+const developmentRoundDialogId = ref<number | null>(null)
+const developmentRoundRetrying = ref(false)
+const clarificationRefreshing = ref(false)
+const developmentRefreshing = ref(false)
 const clarificationAnalysis = ref<IntakeClarificationAnalysisResponse | null>(null)
+const clarificationHistory = ref<IntakeClarificationAnalysisResponse[]>([])
 const developmentConfirmSubmitting = ref(false)
+const developmentZentaoSyncing = ref(false)
+const stageRollingBack = ref(false)
 const developmentDraftSaving = ref(false)
 const clarificationAnalysisSubmitting = ref(false)
 const clarificationReplySubmittingKey = ref('')
@@ -149,6 +178,7 @@ const pagination = reactive({
 const createForm = reactive({
   senderName: '',
   developmentOwnerUserName: '',
+  developmentStandard: 'SDD',
   sourceChannel: '',
   rawContent: '',
   projectGroup: '',
@@ -257,7 +287,6 @@ const canOperateAi = computed(() => authStore.hasPermission('intake:ai:operate')
 const canManageTodo = computed(() => authStore.hasPermission('intake:todo:manage'))
 const canManageAttachment = computed(() => authStore.hasAnyPermission(['intake:attachment:manage', 'intake:record:update']))
 const canUpdateMetadata = computed(() => authStore.hasAnyPermission(['intake:metadata:update', 'intake:record:update']))
-const canSyncZentao = computed(() => authStore.hasAnyPermission(['intake:zentao:sync', 'intake:ai:operate']))
 
 function currentDevelopmentDemandStatus() {
   if (stageActionVisible.value && isDevelopmentTaskEvaluationDialog.value) {
@@ -278,7 +307,7 @@ function canEditDevelopmentDraft() {
   return Boolean(
     canOperateAi.value
     && currentDevelopmentDemandStatus()
-    && !isDevelopmentAnalysisInProgress(developmentAnalysis.value?.status),
+    && !isDevelopmentAnalysisInProgress(developmentAnalysis.value),
   )
 }
 
@@ -681,6 +710,23 @@ async function refreshSelectedDetail(intakeId: number) {
   return detail
 }
 
+/** 切换详情 tab 即重新查询该 tab 最新状态：澄清/研发任务走各自接口，其余 tab 数据都在详情里。 */
+async function handleDetailTabChange(name: string | number) {
+  const id = selectedDetail.value?.id
+  if (!id || detailLoading.value) {
+    return
+  }
+  if (name === 'clarification') {
+    await loadClarificationAnalysis(id, { expectedDetailId: id })
+    return
+  }
+  if (name === 'evaluation') {
+    await loadDevelopmentAnalysis(id, { expectedDetailId: id })
+    return
+  }
+  await refreshSelectedDetail(id)
+}
+
 async function openDetail(id: number) {
   const openRequestToken = ++openDetailRequestToken
   if (!stageActionVisible.value) {
@@ -697,6 +743,16 @@ async function openDetail(id: number) {
   if (!detail) {
     detailVisible.value = false
     return
+  }
+  aiDevelopment.value = null
+  submitTestReview.value = null
+  if (isDevelopmentRequirement(detail)) {
+    await loadAiDevelopmentFor(id)
+    try {
+      submitTestReview.value = await fetchSubmitTestReview(id)
+    } catch (error) {
+      submitTestReview.value = null
+    }
   }
   stageActionForm.projectGroup = ''
   if (isDevelopmentRequirement(detail)) {
@@ -735,11 +791,13 @@ function resetDetailDialog() {
 
 function clearDevelopmentAnalysisState() {
   developmentAnalysis.value = null
+  developmentHistory.value = []
   stageActionForm.projectGroup = ''
 }
 
 function clearClarificationAnalysisState() {
   clarificationAnalysis.value = null
+  clarificationHistory.value = []
 }
 
 function currentDevelopmentContextRow() {
@@ -772,6 +830,7 @@ async function loadDevelopmentAnalysis(id: number, options: { expectedDetailId?:
       return null
     }
     developmentAnalysis.value = normalizeDevelopmentAnalysisEffort(analysis)
+    loadDevelopmentHistory(id)
     const projectGroup = resolveDevelopmentProjectGroup(developmentAnalysis.value?.draft?.projectGroup)
     if (projectGroup) {
       stageActionForm.projectGroup = projectGroup
@@ -793,6 +852,7 @@ async function loadClarificationAnalysis(id: number, options: { expectedDetailId
   const requestToken = ++clarificationAnalysisRequestToken
   if (options.clearBeforeLoad) {
     clarificationAnalysis.value = null
+    clarificationHistory.value = []
   }
   try {
     const analysis = await fetchClarificationAnalysis(id)
@@ -803,6 +863,7 @@ async function loadClarificationAnalysis(id: number, options: { expectedDetailId
       return null
     }
     clarificationAnalysis.value = analysis
+    loadClarificationHistory(id)
     return analysis
   } catch (error) {
     if (requestToken === clarificationAnalysisRequestToken) {
@@ -869,38 +930,20 @@ function developmentSystemSelectOptions() {
 }
 
 function developmentDeveloperSelectOptions() {
-  const byName = new Map<string, UserOption>()
-  for (const developer of developmentDeveloperOptions.value) {
-    if (developer.userName) {
-      byName.set(developer.userName, developer)
-    }
-  }
-  for (const developer of developmentAnalysis.value?.draft?.developerPool || []) {
-    const normalized = cleanBusinessValue(developer)
-    if (normalized && !byName.has(normalized)) {
-      byName.set(normalized, { userName: normalized, displayName: normalized, projectGroup: null })
-    }
-  }
-  for (const item of developmentAnalysis.value?.draft?.workItems || []) {
-    const owner = cleanBusinessValue(item.ownerUserName)
-    if (owner && !byName.has(owner)) {
-      byName.set(owner, { userName: owner, displayName: owner, projectGroup: null })
-    }
-  }
-  const demandOwner = cleanBusinessValue(currentDevelopmentContextDetail()?.developmentOwnerUserName || currentDevelopmentContextRow()?.developmentOwnerUserName)
-  if (demandOwner && !byName.has(demandOwner)) {
-    byName.set(demandOwner, { userName: demandOwner, displayName: demandOwner, projectGroup: null })
-  }
-  const currentUser = cleanBusinessValue(authStore.userName)
-  if (currentUser && !byName.has(currentUser)) {
-    byName.set(currentUser, { userName: currentUser, displayName: currentUser, projectGroup: null })
-  }
-  return Array.from(byName.values())
+  // 人员候选统一来自账号管理（sys_user），不再合并草稿池、历史负责人等自由文本。
+  return developmentDeveloperOptions.value.filter((developer) => Boolean(developer.userName))
+}
+
+function formatDeveloperOption(developer: UserOption) {
+  return developer.displayName && developer.displayName !== developer.userName
+    ? `${developer.displayName}（${developer.userName}）`
+    : developer.userName
 }
 
 function openCreateDialog() {
   createForm.senderName = authStore.userName || ''
   createForm.developmentOwnerUserName = ''
+  createForm.developmentStandard = 'SDD'
   createForm.sourceChannel = '需求录入'
   createForm.rawContent = ''
   createForm.projectGroup = ''
@@ -1073,6 +1116,9 @@ async function submitCreate() {
     const formData = new FormData()
     formData.append('senderName', createForm.senderName)
     formData.append('developmentOwnerUserName', createForm.developmentOwnerUserName.trim())
+    if (createForm.developmentStandard) {
+      formData.append('developmentStandard', createForm.developmentStandard)
+    }
     formData.append('sourceChannel', createForm.sourceChannel)
     if (createForm.rawContent) {
       formData.append('rawContent', createForm.rawContent)
@@ -1091,6 +1137,144 @@ async function submitCreate() {
     console.error(error)
   } finally {
     submitting.value = false
+  }
+}
+
+
+async function loadAiDevelopmentFor(id: number) {
+  try {
+    aiDevelopment.value = await fetchIntakeAiDevelopment(id)
+  } catch (error) {
+    aiDevelopment.value = null
+  }
+}
+
+async function retryAiDevelopmentAction() {
+  if (!aiDevelopment.value) {
+    return
+  }
+  const intakeId = aiDevelopment.value.intakeId
+  try {
+    aiDevelopment.value = await retryIntakeAiDevelopment(intakeId)
+    ElMessage.success('AI 开发重试已发起')
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '重试 AI 开发失败'))
+    console.error(error)
+  }
+}
+
+function resolveAiDevelopmentStatusLabel(status: string | null | undefined) {
+  switch (status) {
+    case 'PENDING': return '待执行'
+    case 'RUNNING': return '执行中'
+    case 'SUCCEEDED': return 'Agent 执行中'
+    case 'COMPLETED': return '自测完成'
+    case 'FAILED': return '失败'
+    default: return '未触发'
+  }
+}
+
+function submitTestEnvironmentOptions() {
+  const code = selectedDetail.value?.structuredData?.businessLineCode
+    || (stageActionRow.value as unknown as { businessLineCode?: string | null } | null)?.businessLineCode
+  if (!code) {
+    return []
+  }
+  const group = projectGroups.value.find(item => item.businessLineCode === code)
+  return (group?.supportedEnvironments ?? []).filter(env => env !== 'PROD')
+}
+
+/** 默认 Job 名：环境小写前缀 + 首个任务系统（Jenkins Job 按 {env}-{system} 命名）。 */
+function defaultSubmitTestJobName() {
+  const firstSystem = developmentAnalysis.value?.draft?.workItems
+    ?.flatMap(item => item.systemTags ?? [])
+    ?.filter(Boolean)
+    ?.[0]
+  const environment = submitTestEnvironmentCode.value || 'TEST'
+  return firstSystem ? `${environment.toLowerCase()}-${firstSystem}` : ''
+}
+
+function stopSubmitTestPolling() {
+  if (submitTestReviewTimer.value !== null) {
+    window.clearInterval(submitTestReviewTimer.value)
+    submitTestReviewTimer.value = null
+  }
+}
+
+function pollSubmitTestReview() {
+  stopSubmitTestPolling()
+  submitTestReviewTimer.value = window.setInterval(async () => {
+    if (!stageActionRow.value || !stageActionVisible.value) {
+      stopSubmitTestPolling()
+      return
+    }
+    try {
+      const review = await fetchSubmitTestReview(stageActionRow.value.id)
+      submitTestReview.value = review
+      if (review && review.reviewStatus !== 'PENDING' && review.reviewStatus !== 'RUNNING') {
+        stopSubmitTestPolling()
+      }
+    } catch (error) {
+      stopSubmitTestPolling()
+    }
+  }, 4000)
+}
+
+async function startSubmitTestReviewFlow() {
+  if (!stageActionRow.value) {
+    return
+  }
+  submitTestReviewStarting.value = true
+  try {
+    submitTestReview.value = await startSubmitTestReview(stageActionRow.value.id)
+    pollSubmitTestReview()
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '触发提测 AI 审核失败'))
+    console.error(error)
+  } finally {
+    submitTestReviewStarting.value = false
+  }
+}
+
+/** AI 审核开关联动：开启时拉取/触发审核并按需轮询，关闭时停止轮询。 */
+async function handleAiReviewToggle(enabled: string | number | boolean) {
+  if (!stageActionRow.value) {
+    return
+  }
+  if (!enabled) {
+    stopSubmitTestPolling()
+    return
+  }
+  try {
+    const review = await fetchSubmitTestReview(stageActionRow.value.id)
+    submitTestReview.value = review
+    if (review && (review.reviewStatus === 'PENDING' || review.reviewStatus === 'RUNNING')) {
+      pollSubmitTestReview()
+    } else if (!review) {
+      await startSubmitTestReviewFlow()
+    }
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+function resolveSubmitTestReviewAlertType(status: string | null | undefined) {
+  switch (status) {
+    case 'PASSED': return 'success'
+    case 'FAILED': return 'error'
+    case 'PENDING': case 'RUNNING': case 'SKIPPED': return 'info'
+    default: return 'warning'
+  }
+}
+
+function resolveSubmitTestReviewStatusLabel(status: string | null | undefined) {
+  switch (status) {
+    case 'PENDING': return '排队中'
+    case 'RUNNING': return '审核中'
+    case 'PASSED': return '审核通过'
+    case 'FAILED': return '审核不通过'
+    case 'SKIPPED': return '已跳过'
+    default: return '未审核'
   }
 }
 
@@ -1269,6 +1453,7 @@ function resolveActionForRow(row: IntakeSummary) {
     case '待设计':
       return 'CONFIRM_DESIGN'
     case '开发中':
+    case '开发完成':
       return 'SUBMIT_TESTING'
     case '测试中':
       return 'PASS_TESTING'
@@ -1411,6 +1596,21 @@ async function openStageActionDialog(row: IntakeSummary) {
     stageActionForm.actualEffort = cleanBusinessValue(row.actualEffort)
     stageActionForm.actualCompletedTime = normalizePickerDateValue(row.actualCompletedTime) || normalizePickerDateValue(new Date().toISOString())
   }
+  if (action === 'SUBMIT_TESTING') {
+    submitTestReview.value = null
+    submitTestForceConfirm.value = false
+    submitTestAiReviewEnabled.value = false
+    submitTestJenkinsEnabled.value = false
+    submitTestJobName.value = defaultSubmitTestJobName()
+    submitTestOwnerUserName.value = ''
+    const environments = submitTestEnvironmentOptions()
+    submitTestEnvironmentCode.value = environments.includes('TEST') ? 'TEST' : (environments[0] ?? '')
+    try {
+      submitTestReview.value = await fetchSubmitTestReview(row.id)
+    } catch (error) {
+      console.error(error)
+    }
+  }
   if (action === 'PASS_TESTING') {
     stageActionForm.actualEffort = cleanBusinessValue(row.actualEffort)
     stageActionForm.scheduledAcceptanceDate = normalizePickerDateValue(row.scheduledAcceptanceDate) || normalizePickerDateValue(new Date().toISOString())
@@ -1520,6 +1720,41 @@ async function submitStageAction() {
   }
   stageSubmitting.value = true
   try {
+    if (stageActionForm.action === 'SUBMIT_TESTING') {
+      if (!submitTestOwnerUserName.value.trim()) {
+        ElMessage.warning('请选择测试负责人')
+        return
+      }
+      if (submitTestJenkinsEnabled.value && !submitTestEnvironmentCode.value) {
+        ElMessage.warning('请选择测试环境')
+        return
+      }
+      await confirmSubmitTest(stageActionRow.value.id, {
+        testOwnerUserName: submitTestOwnerUserName.value.trim(),
+        environmentCode: submitTestJenkinsEnabled.value ? submitTestEnvironmentCode.value : undefined,
+        forceConfirm: submitTestForceConfirm.value,
+        skipAiReview: !submitTestAiReviewEnabled.value,
+        triggerJenkins: submitTestJenkinsEnabled.value,
+        actualEffort: actualEffort || undefined,
+        actualCompletedTime: stageActionForm.actualCompletedTime || undefined,
+        occurredAt: stageActionForm.occurredAt || undefined,
+        jenkinsJobName: submitTestJenkinsEnabled.value ? (submitTestJobName.value.trim() || undefined) : undefined,
+      })
+      stopSubmitTestPolling()
+      stageActionVisible.value = false
+      ElMessage.success(submitTestJenkinsEnabled.value
+        ? '提测完成：禅道测试单已创建，Jenkins 测试环境构建已触发'
+        : '提测完成：禅道测试单已创建')
+      await loadIntakeRecords()
+      if (selectedDetail.value?.id === stageActionRow.value.id) {
+        try {
+          await refreshSelectedDetail(stageActionRow.value.id)
+        } catch (error) {
+          console.error(error)
+        }
+      }
+      return
+    }
     const payload = {
       action: stageActionForm.action,
       plannedDueDate: stageActionForm.plannedDueDate || undefined,
@@ -1751,8 +1986,116 @@ function clarificationReplyKey(item: IntakeClarificationItem) {
   return `${item.itemType}:${item.index}`
 }
 
-function isClarificationInProgress(status: string | null | undefined) {
+function isClarificationInProgress(analysis: IntakeClarificationAnalysisResponse | null | undefined) {
+  return isAnalysisRunInProgress(analysis?.status, analysis?.retryable)
+}
+
+const clarificationRounds = computed<IntakeClarificationAnalysisResponse[]>(() => {
+  const rounds: IntakeClarificationAnalysisResponse[] = []
+  if (clarificationAnalysis.value) {
+    rounds.push(clarificationAnalysis.value)
+  }
+  for (const run of clarificationHistory.value) {
+    if (!clarificationAnalysis.value || run.id !== clarificationAnalysis.value.id) {
+      rounds.push(run)
+    }
+  }
+  return rounds
+})
+
+const AI_STATUS_VISUALS: Record<string, { icon: unknown; tone: string; spin?: boolean }> = {
+  PENDING: { icon: Clock, tone: 'info' },
+  RUNNING: { icon: Loading, tone: 'primary', spin: true },
+  DRAFT: { icon: EditPen, tone: 'warning' },
+  CONFIRMED: { icon: CircleCheckFilled, tone: 'success' },
+  FAILED: { icon: CircleCloseFilled, tone: 'danger' },
+}
+
+function aiStatusVisual(status: string | null | undefined) {
+  return AI_STATUS_VISUALS[status || ''] || { icon: Clock, tone: 'info' }
+}
+
+function resolveClarificationRunStatusType(status: string | null | undefined) {
+  switch (status) {
+    case 'FAILED':
+      return 'danger'
+    case 'CONFIRMED':
+      return 'success'
+    case 'DRAFT':
+      return 'primary'
+    case 'RUNNING':
+      return 'warning'
+    default:
+      return 'info'
+  }
+}
+
+function clarifyRoundFinishedText(run: IntakeClarificationAnalysisResponse) {
+  if (run.finishedAt) {
+    return formatClarificationTime(run.finishedAt)
+  }
+  return run.status === 'DRAFT' || run.status === 'CONFIRMED' || run.status === 'FAILED'
+    ? formatClarificationTime(run.updatedAt)
+    : '进行中'
+}
+
+function clarificationHistoryItems(run: IntakeClarificationAnalysisResponse | null | undefined, type: 'QUESTION' | 'RISK') {
+  return (run?.items || []).filter((item) => item.itemType === type)
+}
+
+const clarificationRoundDialogVisible = ref(false)
+const clarificationRoundDialogId = ref<number | null>(null)
+
+const clarificationRoundDialogRun = computed<IntakeClarificationAnalysisResponse | null>(() => {
+  if (clarificationRoundDialogId.value == null) {
+    return null
+  }
+  return clarificationRounds.value.find((run) => run.id === clarificationRoundDialogId.value) || null
+})
+
+const clarificationRoundDialogTitle = computed(() => {
+  const run = clarificationRoundDialogRun.value
+  if (!run) {
+    return '澄清记录详情'
+  }
+  const index = clarificationRounds.value.findIndex((item) => item.id === run.id)
+  const roundLabel = index >= 0 ? `第 ${clarificationRounds.value.length - index} 轮` : ''
+  return `${roundLabel}澄清记录 · ${resolveClarificationStatusLabel(run.status)}`
+})
+
+function openClarificationRoundDialog(run: IntakeClarificationAnalysisResponse) {
+  clarificationRoundDialogId.value = run.id
+  clarificationRoundDialogVisible.value = true
+}
+
+function isClarificationRoundLatest(run: IntakeClarificationAnalysisResponse) {
+  return clarificationAnalysis.value?.id === run.id
+}
+
+function runStartedText(run: IntakeClarificationAnalysisResponse) {
+  return formatClarificationTime(run.startedAt || run.createdAt)
+}
+
+function formatClarificationTime(value: string | null | undefined) {
+  if (!value) {
+    return '—'
+  }
+  return value.replace('T', ' ').replace(/\.\d+$/, '')
+}
+
+function isAnalysisRunInProgress(status: string | null | undefined, retryable?: boolean) {
+  if (retryable === true || retryable === false) {
+    return !retryable
+  }
   return status === 'PENDING' || status === 'RUNNING'
+}
+
+async function loadClarificationHistory(id: number) {
+  try {
+    clarificationHistory.value = await fetchClarificationAnalysisHistory(id)
+  } catch (error) {
+    console.error(error)
+  }
 }
 
 async function runClarificationAnalysis() {
@@ -1763,6 +2106,7 @@ async function runClarificationAnalysis() {
   try {
     clarificationAnalysis.value = await startClarificationAnalysis(selectedDetail.value.id)
     ElMessage.success('已提交需求澄清分析')
+    loadClarificationHistory(selectedDetail.value.id)
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '提交需求澄清分析失败'))
     console.error(error)
@@ -1788,6 +2132,7 @@ async function saveClarificationReply(item: IntakeClarificationItem) {
       responseText: cleanNullableBusinessValue(item.responseText),
     })
     ElMessage.success(item.itemType === 'QUESTION' ? '回复已保存' : '风险已确认')
+    loadClarificationHistory(selectedDetail.value.id)
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '保存澄清项失败'))
     console.error(error)
@@ -1874,6 +2219,9 @@ function ensureManualDevelopmentDraft() {
     intakeId,
     status: 'DRAFT',
     message: '人工录入研发任务草稿',
+    retryable: true,
+    startedAt: null,
+    finishedAt: null,
     draft: {
       status: 'DRAFT',
       businessLine: projectGroup,
@@ -1903,6 +2251,7 @@ function ensureManualDevelopmentDraft() {
       zentaoSyncMessage: '禅道同步接口已预留，当前不会调用禅道。',
       generatedAt: new Date().toISOString(),
       generator: 'manual',
+      sddDocuments: null,
     },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -2156,6 +2505,81 @@ async function confirmDevelopmentDraft() {
   }
 }
 
+/** 回退上一阶段（列表行操作）：必填原因；仅改变阶段状态，不触发阶段自动化。 */
+async function rollbackStageFromRow(row: { id: number; demandStatus?: string | null }) {
+  if (stageRollingBack.value) {
+    return
+  }
+  let reason = ''
+  try {
+    const input = await ElMessageBox.prompt(
+      `将把「${row.demandStatus}」阶段的该需求回退到上一阶段，不会触发澄清/评估/AI 开发等自动化动作。`,
+      '回退上一阶段',
+      {
+        confirmButtonText: '确认回退',
+        cancelButtonText: '取消',
+        inputPlaceholder: '回退原因（必填，写入需求历史）',
+        inputValidator: (value: string) => (value && value.trim() ? true : '回退原因不能为空'),
+      },
+    )
+    reason = input.value.trim()
+  } catch {
+    return
+  }
+  stageRollingBack.value = true
+  try {
+    await rollbackIntakeStage(row.id, reason)
+    ElMessage.success('已回退到上一阶段')
+    if (selectedDetail.value?.id === row.id) {
+      await refreshSelectedDetail(row.id)
+    }
+    await loadIntakeRecords()
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '阶段回退失败'))
+    console.error(error)
+  } finally {
+    stageRollingBack.value = false
+  }
+}
+
+function canRollbackStageRow(row: { demandStatus?: string | null }) {
+  return Boolean(row?.demandStatus) && !['已收录', '已完成', '终止关闭', '已暂停'].includes(row.demandStatus as string)
+}
+
+/** 任务同步禅道：草稿可编辑时先保存当前编辑，再推送禅道（新建/更新/取消），完成后刷新评估数据。 */
+async function syncDevelopmentTasksToZentao() {
+  const intakeId = currentDevelopmentContextIntakeId()
+  if (!intakeId) {
+    return
+  }
+  const hasWorkItems = Boolean(developmentAnalysis.value?.draft?.workItems?.length)
+  if (!hasWorkItems) {
+    ElMessage.warning('当前没有可同步的研发任务拆解，请先生成任务评估')
+    return
+  }
+  if (canEditDevelopmentDraft()) {
+    const saved = await persistDevelopmentDraft(intakeId, false)
+    if (!saved) {
+      return
+    }
+  }
+  developmentZentaoSyncing.value = true
+  try {
+    const result = await syncDevelopmentZentao(intakeId)
+    if (result.syncStatus === 'SYNCED') {
+      ElMessage.success(result.summary)
+    } else {
+      ElMessage.warning(result.summary)
+    }
+    await loadDevelopmentAnalysis(intakeId, { expectedDetailId: intakeId })
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '任务同步禅道失败'))
+    console.error(error)
+  } finally {
+    developmentZentaoSyncing.value = false
+  }
+}
+
 async function saveDevelopmentDraft() {
   const intakeId = currentDevelopmentContextIntakeId()
   if (!intakeId) {
@@ -2168,19 +2592,6 @@ async function saveDevelopmentDraft() {
   await persistDevelopmentDraft(intakeId)
 }
 
-async function reserveZentaoSync() {
-  if (!selectedDetail.value) {
-    return
-  }
-  try {
-    await syncIntakeZentao(selectedDetail.value.id)
-    await loadDevelopmentAnalysis(selectedDetail.value.id, { expectedDetailId: selectedDetail.value.id })
-    ElMessage.info('禅道同步接口已预留，当前未执行外部同步')
-  } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '同步禅道失败'))
-    console.error(error)
-  }
-}
 
 async function handleDownload(item: IntakeAttachment) {
   try {
@@ -2577,8 +2988,124 @@ function resolveDevelopmentAnalysisAlertType(status: string | null | undefined) 
   }
 }
 
-function isDevelopmentAnalysisInProgress(status: string | null | undefined) {
-  return status === 'PENDING' || status === 'RUNNING'
+function isDevelopmentAnalysisInProgress(analysis: DevelopmentAnalysisResponse | null | undefined) {
+  return isAnalysisRunInProgress(analysis?.status, analysis?.retryable)
+}
+
+const developmentRounds = computed<DevelopmentAnalysisResponse[]>(() => {
+  const rounds: DevelopmentAnalysisResponse[] = []
+  if (developmentAnalysis.value) {
+    rounds.push(developmentAnalysis.value)
+  }
+  for (const run of developmentHistory.value) {
+    if (!developmentAnalysis.value || run.id !== developmentAnalysis.value.id) {
+      rounds.push(run)
+    }
+  }
+  return rounds
+})
+
+const developmentRoundDialogRun = computed<DevelopmentAnalysisResponse | null>(() => {
+  if (developmentRoundDialogId.value == null) {
+    return null
+  }
+  return developmentRounds.value.find((run) => run.id === developmentRoundDialogId.value) || null
+})
+
+const developmentRoundDialogTitle = computed(() => {
+  const run = developmentRoundDialogRun.value
+  if (!run) {
+    return '研发任务记录详情'
+  }
+  const index = developmentRounds.value.findIndex((item) => item.id === run.id)
+  const roundLabel = index >= 0 ? `第 ${developmentRounds.value.length - index} 轮` : ''
+  return `${roundLabel}研发任务记录 · ${resolveDevelopmentAnalysisStatusLabel(run.status)}`
+})
+
+async function loadDevelopmentHistory(id: number) {
+  try {
+    developmentHistory.value = await fetchDevelopmentAnalysisHistory(id)
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+async function retryDevelopmentRound() {
+  if (!selectedDetail.value) {
+    return
+  }
+  developmentRoundRetrying.value = true
+  try {
+    developmentAnalysis.value = await startDevelopmentAnalysis(selectedDetail.value.id)
+    ElMessage.success('已重新提交研发任务评估')
+    loadDevelopmentHistory(selectedDetail.value.id)
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '提交研发任务评估失败'))
+    console.error(error)
+  } finally {
+    developmentRoundRetrying.value = false
+  }
+}
+
+async function refreshClarificationData() {
+  if (!selectedDetail.value) {
+    return
+  }
+  clarificationRefreshing.value = true
+  try {
+    await loadClarificationAnalysis(selectedDetail.value.id, { expectedDetailId: selectedDetail.value.id })
+  } finally {
+    clarificationRefreshing.value = false
+  }
+}
+
+async function refreshDevelopmentData() {
+  if (!selectedDetail.value) {
+    return
+  }
+  developmentRefreshing.value = true
+  try {
+    await loadDevelopmentAnalysis(selectedDetail.value.id, { expectedDetailId: selectedDetail.value.id })
+  } finally {
+    developmentRefreshing.value = false
+  }
+}
+
+function openDevelopmentRoundDialog(run: DevelopmentAnalysisResponse) {
+  developmentRoundDialogId.value = run.id
+  developmentRoundDialogVisible.value = true
+}
+
+function developmentRoundStartedText(run: DevelopmentAnalysisResponse) {
+  return formatClarificationTime(run.startedAt || run.createdAt)
+}
+
+function developmentRoundFinishedText(run: DevelopmentAnalysisResponse) {
+  if (run.finishedAt) {
+    return formatClarificationTime(run.finishedAt)
+  }
+  return run.status === 'DRAFT' || run.status === 'CONFIRMED' || run.status === 'FAILED'
+    ? formatClarificationTime(run.updatedAt)
+    : '进行中'
+}
+
+function developmentRoundStatusType(status: string | null | undefined) {
+  switch (status) {
+    case 'FAILED':
+      return 'danger'
+    case 'CONFIRMED':
+      return 'success'
+    case 'DRAFT':
+      return 'primary'
+    case 'RUNNING':
+      return 'warning'
+    default:
+      return 'info'
+  }
+}
+
+function developmentRoundWorkItems(run: DevelopmentAnalysisResponse) {
+  return run.draft?.workItems || []
 }
 
 function resolveDemandStatusClass(status: string | null | undefined) {
@@ -2598,6 +3125,7 @@ function resolveDemandStatusClass(status: string | null | undefined) {
     case '待设计':
       return 'demand-status-chip--pending-design'
     case '开发中':
+    case '开发完成':
       return 'demand-status-chip--developing'
     case '测试中':
       return 'demand-status-chip--testing'
@@ -2661,7 +3189,7 @@ function buildDemandStageTimeline(detail: IntakeDetail | null, analysis: Develop
       {
         status: '待评估',
         title: '需求评估',
-        time: isDevelopmentAnalysisInProgress(analysis?.status)
+        time: isDevelopmentAnalysisInProgress(analysis)
           ? (analysis?.createdAt || analysis?.updatedAt || findHistoryTime(detail, ['澄清完成']) || receivedAt)
           : findHistoryTime(detail, ['澄清完成']) || receivedAt,
         metrics: evaluationMetrics,
@@ -2669,6 +3197,7 @@ function buildDemandStageTimeline(detail: IntakeDetail | null, analysis: Develop
 	      { status: '待排期', title: '需求排期', time: findHistoryTime(detail, ['评估完成', '确认研发评估']), metrics: schedulingMetrics },
       { status: '待设计', title: '设计', time: findHistoryTime(detail, ['排期确认']) },
       { status: '开发中', title: '研发', time: structuredData?.developmentStartedDate || findHistoryTime(detail, ['设计完成']), metrics: developmentMetrics },
+      { status: '开发完成', title: '自测完成', time: findHistoryTime(detail, ['AI 自测完成']) },
       { status: '测试中', title: '测试', time: structuredData?.testingStartedDate || findHistoryTime(detail, ['提交测试']), metrics: testingMetrics },
       { status: '待验收', title: '验收', time: structuredData?.acceptanceTime || findHistoryTime(detail, ['测试通过']), metrics: acceptanceMetrics },
       { status: '待上线', currentStatuses: ['待上线', '已完成'], title: '上线', time: structuredData?.releasedTime, metrics: releaseMetrics },
@@ -2822,6 +3351,23 @@ function resolveOccurredAtLabel(action: string) {
 function requiresOccurredAt(action: string) {
   return ['CONFIRM_DESIGN', 'START_PROCESSING', 'SUBMIT_TESTING', 'CONFIRM_RELEASE'].includes(action)
 }
+
+const route = useRoute()
+const router = useRouter()
+
+// 支持从需求看板等入口跳转：/demands/list?intakeId=xx 自动打开对应需求详情
+watch(
+  () => route.query.intakeId,
+  (value) => {
+    const id = Number(value)
+    if (!value || !Number.isInteger(id) || id <= 0) {
+      return
+    }
+    void openDetail(id)
+    void router.replace({ query: { ...route.query, intakeId: undefined } })
+  },
+  { immediate: true },
+)
 
 onMounted(loadBaseData)
 </script>
@@ -3079,6 +3625,12 @@ onMounted(loadBaseData)
                   {{ resolveActionLabel(resolveActionForRow(row)) }}
                 </el-dropdown-item>
                 <el-dropdown-item
+                  v-if="canRollbackStageRow(row)"
+                  @click="rollbackStageFromRow(row)"
+                >
+                  回退上一阶段
+                </el-dropdown-item>
+                <el-dropdown-item
                   v-if="canPauseDemand(row)"
                   @click="openPauseDemandDialog(row)"
                 >
@@ -3147,17 +3699,32 @@ onMounted(loadBaseData)
     <div @paste="handlePastedScreenshots" @keydown.enter="handleCreateDialogKeydown">
       <el-form label-position="top">
       <el-form-item label="研发负责人" required>
-        <el-input
+        <el-select
           v-model="createForm.developmentOwnerUserName"
-          placeholder="请输入研发负责人用户名"
-        />
+          filterable
+          clearable
+          placeholder="选择研发负责人（仅限账号管理中的活跃账号）"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="developer in developmentDeveloperSelectOptions()"
+            :key="developer.userName"
+            :label="formatDeveloperOption(developer)"
+            :value="developer.userName"
+          >
+            <div class="user-option">
+              <span class="user-option-name">{{ developer.userName }}</span>
+              <span class="user-option-meta">{{ developer.displayName || developer.userName }}</span>
+            </div>
+          </el-option>
+        </el-select>
       </el-form-item>
       <el-form-item label="业务线" required>
         <el-select
           v-model="createForm.projectGroup"
           filterable
           style="width: 100%"
-          placeholder="请选择业务线，AI 任务评估会优先使用该业务线匹配项目和 GitLab 仓库"
+          placeholder="请选择业务线，AI 研发任务会优先使用该业务线匹配项目和 GitLab 仓库"
         >
           <el-option
             v-for="item in projectGroups"
@@ -3172,6 +3739,12 @@ onMounted(loadBaseData)
           </el-option>
         </el-select>
       </el-form-item>
+      <el-form-item label="研发规范">
+        <el-select v-model="createForm.developmentStandard" style="width: 100%">
+          <el-option label="SDD（按知识库 SDD 流程做设计评估与任务拆解）" value="SDD" />
+          <el-option label="常规（沿用现有 AI 研发任务）" value="STANDARD" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="需求录入">
         <el-input
           v-model="createForm.rawContent"
@@ -3180,12 +3753,6 @@ onMounted(loadBaseData)
           placeholder="可直接输入需求内容；也可只上传或粘贴需求截图"
         />
       </el-form-item>
-      <el-alert
-        title="截图和附件会先直接入库，再异步调用 Codex CLI 识别并回填结构化字段。支持点击上传、拖拽上传和直接粘贴截图。"
-        type="warning"
-        show-icon
-        :closable="false"
-      />
       <el-row :gutter="16" class="upload-panel-row">
         <el-col :span="12">
           <el-form-item label="需求截图（可多选）" class="upload-field">
@@ -3232,6 +3799,7 @@ onMounted(loadBaseData)
     :title="resolveStageActionDialogTitle(stageActionForm.action)"
     :width="isDevelopmentTaskEvaluationDialog ? '94vw' : '520px'"
     :top="isDevelopmentTaskEvaluationDialog ? '3vh' : '15vh'"
+    @close="stopSubmitTestPolling"
     class="stage-action-dialog"
     :class="{ 'task-evaluation-dialog': isDevelopmentTaskEvaluationDialog }"
   >
@@ -3262,7 +3830,6 @@ onMounted(loadBaseData)
                     </div>
                   </el-option>
                 </el-select>
-                <el-button v-if="developmentAnalysis && canSyncZentao" @click="reserveZentaoSync">同步禅道</el-button>
               </div>
             </div>
           </div>
@@ -3378,21 +3945,19 @@ onMounted(loadBaseData)
                         <el-select
                           v-model="row.ownerUserName"
                           filterable
-                          allow-create
-                          default-first-option
                           clearable
-                          placeholder="选择或输入负责人"
+                          placeholder="选择负责人（仅限账号管理中的活跃账号）"
                           style="width: 100%"
                         >
                           <el-option
                             v-for="developer in developmentDeveloperSelectOptions()"
                             :key="developer.userName"
-                            :label="developer.userName"
+                            :label="formatDeveloperOption(developer)"
                             :value="developer.userName"
                           >
                             <div class="user-option">
                               <span class="user-option-name">{{ developer.userName }}</span>
-                              <span class="user-option-meta">{{ developer.projectGroup || developer.displayName || '候选负责人' }}</span>
+                              <span class="user-option-meta">{{ developer.displayName || developer.userName }}</span>
                             </div>
                           </el-option>
                         </el-select>
@@ -3407,17 +3972,17 @@ onMounted(loadBaseData)
                 </div>
               </div>
 
-              <div class="task-evaluation-result-grid task-evaluation-result-grid--single">
-                <div class="task-evaluation-info-card">
-                  <div class="mini-title">风险与待确认</div>
-                  <ul v-if="[...developmentAnalysis.draft.risks, ...developmentAnalysis.draft.questions].length" class="plain-list warning-list">
-                    <li v-for="item in [...developmentAnalysis.draft.risks, ...developmentAnalysis.draft.questions]" :key="item">{{ item }}</li>
-                  </ul>
-                  <span v-else class="muted-text">无</span>
-                </div>
-              </div>
               <div class="task-evaluation-save-actions">
                 <el-button type="primary" :loading="developmentDraftSaving" :disabled="!canEditDevelopmentDraft()" @click="saveDevelopmentDraft">保存</el-button>
+                <el-button
+                  v-if="canOperateAi"
+                  type="warning"
+                  plain
+                  :loading="developmentZentaoSyncing"
+                  @click="syncDevelopmentTasksToZentao"
+                >
+                  任务同步禅道
+                </el-button>
                 <el-button
                   v-if="canConfirmDevelopmentDraft()"
                   type="success"
@@ -3492,7 +4057,91 @@ onMounted(loadBaseData)
 	          />
 	        </el-form-item>
 	      </template>
-	      <template v-if="['SUBMIT_TESTING', 'SUBMIT_ACCEPTANCE'].includes(stageActionForm.action)">
+	      <template v-if="stageActionForm.action === 'SUBMIT_TESTING'">
+        <el-form-item label="AI 提测审核">
+          <div class="ai-clarification-option">
+            <el-switch
+              v-model="submitTestAiReviewEnabled"
+              active-text="执行"
+              inactive-text="跳过"
+              @change="handleAiReviewToggle"
+            />
+            <span class="ai-clarification-option__hint">
+              {{ submitTestAiReviewEnabled ? '确认提测前先执行 AI 审核；审核不通过时需人工确认强制提测。' : '跳过 AI 审核直接确认提测。' }}
+            </span>
+          </div>
+        </el-form-item>
+        <template v-if="submitTestAiReviewEnabled">
+          <el-divider content-position="left">AI 提测审核</el-divider>
+          <el-alert
+            :title="`提测 AI 审核：${resolveSubmitTestReviewStatusLabel(submitTestReview?.reviewStatus)}`"
+            :description="submitTestReview?.summary || submitTestReview?.reviewMessage || '开启后执行 AI 审核；审核不通过时需人工确认才能强制提测。'"
+            :type="resolveSubmitTestReviewAlertType(submitTestReview?.reviewStatus)"
+            show-icon
+            :closable="false"
+          />
+          <el-table v-if="submitTestReview?.findings?.length" :data="submitTestReview.findings" border size="small" class="submit-test-finding-table">
+            <el-table-column prop="title" label="缺陷/风险" min-width="180" />
+            <el-table-column prop="severity" label="级别" width="90" />
+            <el-table-column prop="description" label="说明" min-width="220" />
+            <el-table-column prop="evidence" label="依据" min-width="160" />
+          </el-table>
+          <div v-if="submitTestReview?.reviewStatus === 'FAILED'" class="submit-test-force-confirm">
+            <el-checkbox v-model="submitTestForceConfirm">
+              已知悉 AI 审核不通过的缺陷，人工确认强制提测（将记录确认人）
+            </el-checkbox>
+          </div>
+          <el-button
+            v-if="!submitTestReview || submitTestReview.reviewStatus === 'FAILED'"
+            size="small"
+            type="primary"
+            plain
+            :loading="submitTestReviewStarting"
+            @click="startSubmitTestReviewFlow"
+          >
+            {{ submitTestReview ? '重新执行 AI 审核' : '执行 AI 审核' }}
+          </el-button>
+        </template>
+        <el-form-item label="测试负责人" required class="submit-test-environment-field">
+          <el-select
+            v-model="submitTestOwnerUserName"
+            filterable
+            clearable
+            placeholder="选择测试负责人（禅道测试单负责人）"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="developer in developmentDeveloperSelectOptions()"
+              :key="developer.userName"
+              :label="formatDeveloperOption(developer)"
+              :value="developer.userName"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="触发 Jenkins 构建">
+          <div class="ai-clarification-option">
+            <el-switch
+              v-model="submitTestJenkinsEnabled"
+              active-text="构建"
+              inactive-text="不构建"
+            />
+            <span class="ai-clarification-option__hint">
+              {{ submitTestJenkinsEnabled ? '确认提测时触发所选测试环境的 Jenkins 构建并推进测试中。' : '仅创建禅道测试单并推进测试中。' }}
+            </span>
+          </div>
+        </el-form-item>
+        <template v-if="submitTestJenkinsEnabled">
+          <el-form-item label="测试环境" required class="submit-test-environment-field">
+            <el-select v-model="submitTestEnvironmentCode" placeholder="选择本次发布的测试环境" style="width: 100%">
+              <el-option v-for="env in submitTestEnvironmentOptions()" :key="env" :label="env" :value="env" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Jenkins Job" class="submit-test-environment-field">
+            <el-input v-model="submitTestJobName" placeholder="留空则按环境前缀+任务系统自动拼接" clearable />
+          </el-form-item>
+        </template>
+      </template>
+      <template v-if="['SUBMIT_TESTING', 'SUBMIT_ACCEPTANCE'].includes(stageActionForm.action)">
         <el-form-item :label="stageActionForm.action === 'SUBMIT_ACCEPTANCE' ? '实际工时（可选）' : '实际开发工时'">
           <el-input v-model="stageActionForm.actualEffort" placeholder="例如 24h" />
         </el-form-item>
@@ -3586,7 +4235,7 @@ onMounted(loadBaseData)
 
       <template #default>
         <template v-if="selectedDetail">
-          <el-tabs v-model="detailActiveTab" class="detail-tabs">
+          <el-tabs v-model="detailActiveTab" class="detail-tabs" @tab-change="handleDetailTabChange">
             <el-tab-pane label="基本信息" name="basic">
               <template v-if="selectedDetail.structuredData">
                 <div class="detail-basic-layout">
@@ -3815,102 +4464,100 @@ onMounted(loadBaseData)
               <el-empty v-else description="尚未抽取出结构化字段" />
             </el-tab-pane>
 
-            <el-tab-pane :label="formatTodoTabLabel(activeDetailTodoCount)" name="todos">
-              <div class="todo-tab">
-                <div class="section-title section-title--actions">
-                  <span>需求待办</span>
-                  <el-button v-if="canManageTodo" type="primary" plain size="small" @click="openCreateTodoDialog">
-                    新增待办
-                  </el-button>
-                </div>
-                <el-table
-                  v-if="detailTodos.length"
-                  :data="detailTodos"
-                  size="small"
-                  border
-                  class="todo-table"
-                >
-                  <el-table-column prop="title" label="待办标题" min-width="180" show-overflow-tooltip />
-                  <el-table-column prop="content" label="内容" min-width="220" show-overflow-tooltip>
-                    <template #default="{ row }">
-                      {{ row.content || '-' }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="状态" width="96">
-                    <template #default="{ row }">
-                      <el-tag
-                        size="small"
-                        :type="resolveTodoStatusType(row.status)"
-                        :effect="isActiveIntakeTodoStatus(row.status) ? 'dark' : 'plain'"
-                        :class="{ 'todo-status-tag--active': isActiveIntakeTodoStatus(row.status) }"
-                      >
-                        {{ row.status || '-' }}
-                      </el-tag>
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="处理人" width="120">
-                    <template #default="{ row }">
-                      {{ row.assigneeUserName || '-' }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="计划处理" width="150">
-                    <template #default="{ row }">
-                      {{ formatDisplayTime(row.plannedAt) }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="完成时间" width="150">
-                    <template #default="{ row }">
-                      {{ formatDisplayTime(row.completedAt) }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="processResult" label="处理结果" min-width="180" show-overflow-tooltip>
-                    <template #default="{ row }">
-                      {{ row.processResult || '-' }}
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="操作" width="192" fixed="right">
-                    <template #default="{ row }">
-                      <el-button v-if="canManageTodo" link type="primary" @click="openEditTodoDialog(row)">编辑</el-button>
-                      <el-button v-if="canManageTodo" link type="primary" @click="openTodoStatusDialog(row)">状态</el-button>
-                      <el-button
-                        v-if="canManageTodo"
-                        link
-                        type="danger"
-                        :loading="deletingTodoId === row.id"
-                        @click="deleteTodoFromDetail(row)"
-                      >
-                        删除
-                      </el-button>
-                    </template>
-                  </el-table-column>
-                </el-table>
-                <el-empty v-else description="暂无需求待办" :image-size="96" />
-              </div>
-            </el-tab-pane>
-
             <el-tab-pane v-if="isDevelopmentRequirement(selectedDetail)" label="需求澄清" name="clarification">
               <div class="task-evaluation-layout task-evaluation-layout--detail">
-                <div class="task-evaluation-toolbar-card">
-                  <div class="task-evaluation-toolbar-main">
-                    <div class="task-evaluation-toolbar">
-                      <span class="task-evaluation-toolbar-label">
-                        澄清状态：{{ resolveClarificationStatusLabel(clarificationAnalysis?.status) }}
-                      </span>
-                      <el-button
-                        type="primary"
-                        plain
-                        :loading="clarificationAnalysisSubmitting"
-                        :disabled="isClarificationInProgress(clarificationAnalysis?.status)"
-                        @click="runClarificationAnalysis"
-                      >
-                        {{ clarificationAnalysis ? '重新分析澄清项' : '分析澄清项' }}
-                      </el-button>
+                <div class="task-evaluation-toolbar-card ai-status-toolbar">
+                  <div class="ai-status-display" :class="`ai-status-display--${aiStatusVisual(clarificationAnalysis?.status).tone}`">
+                    <div class="ai-status-icon">
+                      <el-icon :size="38">
+                        <component
+                          :is="aiStatusVisual(clarificationAnalysis?.status).icon"
+                          :class="{ 'ai-status-icon--spin': aiStatusVisual(clarificationAnalysis?.status).spin }"
+                        />
+                      </el-icon>
                     </div>
-                    <div v-if="clarificationAnalysis?.message" class="muted-text">{{ clarificationAnalysis.message }}</div>
+                    <div class="ai-status-text">
+                      <div class="ai-status-label">{{ resolveClarificationStatusLabel(clarificationAnalysis?.status) }}</div>
+                      <div v-if="clarificationAnalysis?.message" class="ai-status-message">{{ clarificationAnalysis.message }}</div>
+                    </div>
+                  </div>
+                  <div class="ai-status-actions">
+                    <el-button
+                      type="primary"
+                      plain
+                      :loading="clarificationAnalysisSubmitting"
+                      :disabled="isClarificationInProgress(clarificationAnalysis)"
+                      @click="runClarificationAnalysis"
+                    >
+                      {{ clarificationAnalysis ? '重新分析' : '分析澄清项' }}
+                    </el-button>
+                    <el-button
+                      circle
+                      :icon="Refresh"
+                      :loading="clarificationRefreshing"
+                      title="刷新最新澄清数据"
+                      @click="refreshClarificationData"
+                    />
                   </div>
                 </div>
 
-                <template v-if="clarificationAnalysis">
+                <div v-if="clarificationRounds.length" class="task-evaluation-section">
+                  <el-table :data="clarificationRounds" size="small" class="clarification-round-table">
+                    <el-table-column label="轮次" width="80">
+                      <template #default="{ $index }">第 {{ clarificationRounds.length - $index }} 轮</template>
+                    </el-table-column>
+                    <el-table-column label="状态" width="90">
+                      <template #default="{ row }">
+                        <el-tag size="small" :type="resolveClarificationRunStatusType(row.status)" effect="plain">
+                          {{ resolveClarificationStatusLabel(row.status) }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="开始时间" min-width="160">
+                      <template #default="{ row }">{{ runStartedText(row) }}</template>
+                    </el-table-column>
+                    <el-table-column label="结束时间" min-width="160">
+                      <template #default="{ row }">{{ clarifyRoundFinishedText(row) }}</template>
+                    </el-table-column>
+                    <el-table-column label="待确认项" width="80" align="center">
+                      <template #default="{ row }">{{ clarificationHistoryItems(row, 'QUESTION').length }}</template>
+                    </el-table-column>
+                    <el-table-column label="风险项" width="80" align="center">
+                      <template #default="{ row }">{{ clarificationHistoryItems(row, 'RISK').length }}</template>
+                    </el-table-column>
+                    <el-table-column label="失败原因" min-width="180" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.status === 'FAILED' ? (row.message || '—') : '—' }}</template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="90" fixed="right">
+                      <template #default="{ row }">
+                        <el-button link type="primary" size="small" @click="openClarificationRoundDialog(row)">
+                          详情
+                        </el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+                <el-empty v-else description="开始澄清后会自动生成澄清项，也可以手动触发分析。" />
+
+                <el-dialog
+                  v-model="clarificationRoundDialogVisible"
+                  :title="clarificationRoundDialogTitle"
+                  width="760px"
+                  append-to-body
+                >
+                  <div v-if="clarificationRoundDialogRun">
+                    <div class="muted-text clarification-round-meta">
+                      开始：{{ runStartedText(clarificationRoundDialogRun) }}
+                      · 结束：{{ clarifyRoundFinishedText(clarificationRoundDialogRun) }}
+                    </div>
+                    <div
+                      v-if="clarificationRoundDialogRun.status === 'FAILED' && clarificationRoundDialogRun.message"
+                      class="clarification-round-failure"
+                    >
+                      失败原因：{{ clarificationRoundDialogRun.message }}
+                    </div>
+
+                    <template v-if="isClarificationRoundLatest(clarificationRoundDialogRun)">
                   <div class="task-evaluation-section">
                     <div class="section-title">待确认项</div>
                     <div v-if="clarificationItems('QUESTION').length" class="clarification-item-list">
@@ -3976,20 +4623,137 @@ onMounted(loadBaseData)
                     </div>
                     <el-empty v-else description="当前没有风险项" />
                   </div>
-                </template>
-                <el-empty v-else description="开始澄清后会自动生成澄清项，也可以手动触发分析。" />
+                    </template>
+
+                    <template v-else>
+                      <div v-if="(clarificationRoundDialogRun?.items || []).length" class="task-evaluation-section">
+                        <div class="section-title">待确认项（只读）</div>
+                        <div v-if="clarificationHistoryItems(clarificationRoundDialogRun, 'QUESTION').length" class="clarification-item-list">
+                          <div
+                            v-for="item in clarificationHistoryItems(clarificationRoundDialogRun, 'QUESTION')"
+                            :key="`${clarificationRoundDialogRun?.id}-q-${item.index}`"
+                            class="task-evaluation-info-card clarification-item-card"
+                          >
+                            <div class="mini-title mini-title--actions">
+                              <span>{{ item.index + 1 }}. {{ item.title }}</span>
+                              <el-tag size="small" :type="resolveClarificationItemStatusType(item)" effect="plain">
+                                {{ resolveClarificationItemStatusLabel(item) }}
+                              </el-tag>
+                            </div>
+                            <div v-if="item.description" class="task-description-content">{{ item.description }}</div>
+                            <div v-if="item.evidence" class="muted-text">依据：{{ item.evidence }}</div>
+                            <div v-if="item.responseText" class="muted-text">回复：{{ item.responseText }}</div>
+                            <div v-if="item.respondedBy" class="muted-text">回复人：{{ item.respondedBy }} · {{ formatClarificationTime(item.respondedAt) }}</div>
+                          </div>
+                        </div>
+                        <el-empty v-else description="该轮没有待确认项" :image-size="48" />
+
+                        <div class="section-title clarification-round-subsection">风险项（只读）</div>
+                        <div v-if="clarificationHistoryItems(clarificationRoundDialogRun, 'RISK').length" class="clarification-item-list">
+                          <div
+                            v-for="item in clarificationHistoryItems(clarificationRoundDialogRun, 'RISK')"
+                            :key="`${clarificationRoundDialogRun?.id}-r-${item.index}`"
+                            class="task-evaluation-info-card clarification-item-card"
+                          >
+                            <div class="mini-title mini-title--actions">
+                              <span>{{ item.index + 1 }}. {{ item.title }}</span>
+                              <el-tag size="small" :type="resolveClarificationItemStatusType(item)" effect="plain">
+                                {{ resolveClarificationItemStatusLabel(item) }}
+                              </el-tag>
+                            </div>
+                            <div v-if="item.description" class="task-description-content">{{ item.description }}</div>
+                            <div v-if="item.evidence" class="muted-text">依据：{{ item.evidence }}</div>
+                            <div v-if="item.responseText" class="muted-text">回复：{{ item.responseText }}</div>
+                            <div v-if="item.respondedBy" class="muted-text">回复人：{{ item.respondedBy }} · {{ formatClarificationTime(item.respondedAt) }}</div>
+                          </div>
+                        </div>
+                        <el-empty v-else description="该轮没有风险项" :image-size="48" />
+                      </div>
+                      <div v-else class="muted-text">该轮未生成澄清项</div>
+                    </template>
+                  </div>
+                </el-dialog>
               </div>
             </el-tab-pane>
 
-            <el-tab-pane v-if="isDevelopmentRequirement(selectedDetail)" label="AI任务评估" name="aiEvaluation">
+            <el-tab-pane v-if="isDevelopmentRequirement(selectedDetail)" label="研发任务" name="evaluation">
               <div class="task-evaluation-layout task-evaluation-layout--detail">
-                <el-alert
-                  :title="`AI任务评估状态：${resolveDevelopmentAnalysisStatusLabel(developmentAnalysis?.status)}`"
-                  :description="developmentAnalysis?.message || '这里只展示 AI 辅助参考，正式任务以“任务评估”页签中人工保存和确认的内容为准。'"
-                  :type="resolveDevelopmentAnalysisAlertType(developmentAnalysis?.status)"
-                  show-icon
-                  :closable="false"
-                />
+                <div class="task-evaluation-toolbar-card ai-status-toolbar">
+                  <div class="ai-status-display" :class="`ai-status-display--${aiStatusVisual(developmentAnalysis?.status).tone}`">
+                    <div class="ai-status-icon">
+                      <el-icon :size="38">
+                        <component
+                          :is="aiStatusVisual(developmentAnalysis?.status).icon"
+                          :class="{ 'ai-status-icon--spin': aiStatusVisual(developmentAnalysis?.status).spin }"
+                        />
+                      </el-icon>
+                    </div>
+                    <div class="ai-status-text">
+                      <div class="ai-status-label">{{ resolveDevelopmentAnalysisStatusLabel(developmentAnalysis?.status) }}</div>
+                      <div v-if="developmentAnalysis?.message" class="ai-status-message">{{ developmentAnalysis.message }}</div>
+                    </div>
+                  </div>
+                  <div class="ai-status-actions">
+                    <el-button
+                      v-if="canRunDevelopmentAnalysis()"
+                      type="primary"
+                      plain
+                      :loading="developmentRoundRetrying"
+                      @click="retryDevelopmentRound"
+                    >
+                      重新分析
+                    </el-button>
+                    <el-button
+                      circle
+                      :icon="Refresh"
+                      :loading="developmentRefreshing"
+                      title="刷新最新研发任务数据"
+                      @click="refreshDevelopmentData"
+                    />
+                  </div>
+                </div>
+
+                <div v-if="developmentRounds.length" class="task-evaluation-section">
+                  <el-table :data="developmentRounds" size="small" class="clarification-round-table">
+                    <el-table-column label="轮次" width="80">
+                      <template #default="{ $index }">第 {{ developmentRounds.length - $index }} 轮</template>
+                    </el-table-column>
+                    <el-table-column label="状态" width="90">
+                      <template #default="{ row }">
+                        <el-tag size="small" :type="developmentRoundStatusType(row.status)" effect="plain">
+                          {{ resolveDevelopmentAnalysisStatusLabel(row.status) }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="开始时间" min-width="150">
+                      <template #default="{ row }">{{ developmentRoundStartedText(row) }}</template>
+                    </el-table-column>
+                    <el-table-column label="结束时间" min-width="150">
+                      <template #default="{ row }">{{ developmentRoundFinishedText(row) }}</template>
+                    </el-table-column>
+                    <el-table-column label="任务数" width="80" align="center">
+                      <template #default="{ row }">{{ developmentRoundWorkItems(row).length }}</template>
+                    </el-table-column>
+                    <el-table-column label="失败原因" min-width="180" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.status === 'FAILED' ? (row.message || '—') : '—' }}</template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="130" fixed="right">
+                      <template #default="{ row }">
+                        <el-button link type="primary" size="small" @click="openDevelopmentRoundDialog(row)">详情</el-button>
+                        <el-button
+                          v-if="canRunDevelopmentAnalysis()"
+                          link
+                          type="warning"
+                          size="small"
+                          :loading="developmentRoundRetrying"
+                          @click="retryDevelopmentRound"
+                        >
+                          重试
+                        </el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
 
                 <template v-if="developmentAnalysis?.draft">
                   <div class="task-evaluation-section">
@@ -4021,78 +4785,10 @@ onMounted(loadBaseData)
                       <span v-else class="muted-text">无</span>
                     </div>
                   </div>
-
-                  <div class="task-evaluation-section">
-                    <div class="section-title">AI任务拆解参考</div>
-                    <el-table :data="developmentAnalysis.draft.workItems" border>
-                      <el-table-column prop="title" label="研发任务" min-width="220" />
-                      <el-table-column label="改动点" min-width="280">
-                        <template #default="{ row }">
-                          <ol v-if="displayChangePoints(row).length" class="task-change-points">
-                            <li v-for="point in displayChangePoints(row)" :key="point">{{ point }}</li>
-                          </ol>
-                          <span v-else class="muted-text">-</span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column label="改造系统" min-width="200">
-                        <template #default="{ row }">
-                          <el-tag
-                            v-for="system in row.systemTags || []"
-                            :key="system"
-                            size="small"
-                            effect="plain"
-                            class="system-tag"
-                          >
-                            {{ system }}
-                          </el-tag>
-                          <span v-if="!row.systemTags?.length" class="muted-text">-</span>
-                        </template>
-                      </el-table-column>
-                      <el-table-column prop="estimatedEffort" label="工时" width="120" />
-                    </el-table>
-                  </div>
-
-                  <div class="task-evaluation-result-grid task-evaluation-result-grid--single">
-                    <div class="task-evaluation-info-card">
-                      <div class="mini-title">风险与待确认</div>
-                      <ul v-if="[...developmentAnalysis.draft.risks, ...developmentAnalysis.draft.questions].length" class="plain-list warning-list">
-                        <li v-for="item in [...developmentAnalysis.draft.risks, ...developmentAnalysis.draft.questions]" :key="item">{{ item }}</li>
-                      </ul>
-                      <span v-else class="muted-text">无</span>
-                    </div>
-                  </div>
                 </template>
-                <el-empty v-else description="澄清完成后会自动触发 AI 任务评估，结果会显示在这里。" />
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane v-if="isDevelopmentRequirement(selectedDetail)" label="任务评估" name="evaluation">
-              <div class="task-evaluation-layout task-evaluation-layout--detail">
                 <div class="task-evaluation-toolbar-card">
                   <div class="task-evaluation-toolbar-main">
                     <div class="task-evaluation-toolbar">
-                      <span class="task-evaluation-toolbar-label">所属业务线</span>
-                      <el-select
-                        v-model="stageActionForm.projectGroup"
-                        class="task-project-group-select"
-                        filterable
-                        clearable
-                        placeholder="请选择业务线"
-                        @change="handleTaskEvaluationProjectGroupChange"
-                      >
-                        <el-option
-                          v-for="item in projectGroups"
-                          :key="item.id"
-                          :label="formatProjectGroupOption(item)"
-                          :value="item.businessLineCode"
-                        >
-                          <div class="project-group-option">
-                            <span class="project-group-option-name">{{ item.groupName }}</span>
-                            <span class="project-group-option-meta">{{ item.gitlabGroupName || '未配置 GitLab 组' }}</span>
-                          </div>
-                        </el-option>
-                      </el-select>
-                      <el-button v-if="developmentAnalysis && canSyncZentao" @click="reserveZentaoSync">同步禅道</el-button>
                     </div>
                   </div>
                 </div>
@@ -4218,24 +4914,28 @@ onMounted(loadBaseData)
                               <el-select
                                 v-model="row.ownerUserName"
                                 filterable
-                                allow-create
-                                default-first-option
                                 clearable
-                                placeholder="选择或输入负责人"
+                                placeholder="选择负责人（仅限账号管理中的活跃账号）"
                                 style="width: 100%"
                               >
                                 <el-option
                                   v-for="developer in developmentDeveloperSelectOptions()"
                                   :key="developer.userName"
-                                  :label="developer.userName"
+                                  :label="formatDeveloperOption(developer)"
                                   :value="developer.userName"
                                 >
                                   <div class="user-option">
                                     <span class="user-option-name">{{ developer.userName }}</span>
-                                    <span class="user-option-meta">{{ developer.projectGroup || developer.displayName || '候选负责人' }}</span>
+                                    <span class="user-option-meta">{{ developer.displayName || developer.userName }}</span>
                                   </div>
                                 </el-option>
                               </el-select>
+                            </template>
+                          </el-table-column>
+                          <el-table-column label="禅道任务" width="90">
+                            <template #default="{ row }">
+                              <el-link v-if="row.zentaoTaskUrl" :href="row.zentaoTaskUrl" target="_blank" type="primary">#{{ row.zentaoTaskId }}</el-link>
+                              <span v-else class="muted-text">—</span>
                             </template>
                           </el-table-column>
                           <el-table-column label="操作" width="90" fixed="right">
@@ -4246,18 +4946,17 @@ onMounted(loadBaseData)
                         </el-table>
                       </div>
                     </div>
-
-                    <div class="task-evaluation-result-grid task-evaluation-result-grid--single">
-                      <div class="task-evaluation-info-card">
-                        <div class="mini-title">风险与待确认</div>
-                        <ul v-if="[...developmentAnalysis.draft.risks, ...developmentAnalysis.draft.questions].length" class="plain-list warning-list">
-                          <li v-for="item in [...developmentAnalysis.draft.risks, ...developmentAnalysis.draft.questions]" :key="item">{{ item }}</li>
-                        </ul>
-                        <span v-else class="muted-text">无</span>
-                      </div>
-                    </div>
                     <div class="task-evaluation-save-actions">
                       <el-button type="primary" :loading="developmentDraftSaving" :disabled="!canEditDevelopmentDraft()" @click="saveDevelopmentDraft">保存</el-button>
+                      <el-button
+                        v-if="canOperateAi"
+                        type="warning"
+                        plain
+                        :loading="developmentZentaoSyncing"
+                        @click="syncDevelopmentTasksToZentao"
+                      >
+                        任务同步禅道
+                      </el-button>
                       <el-button
                         v-if="canConfirmDevelopmentDraft()"
                         type="success"
@@ -4269,12 +4968,188 @@ onMounted(loadBaseData)
                     </div>
                   </template>
 
+                <div v-if="aiDevelopment" class="task-evaluation-section">
+                  <div class="section-title section-title--actions">
+                    <span>AI 分支开发</span>
+                    <el-button v-if="aiDevelopment.executionStatus === 'FAILED'" size="small" type="primary" plain @click="retryAiDevelopmentAction">重试</el-button>
+                  </div>
+                  <div class="task-evaluation-info-card">
+                    <div class="task-metric-grid">
+                      <div class="task-metric-card">
+                        <div class="task-metric-label">执行状态</div>
+                        <div class="task-metric-value">{{ resolveAiDevelopmentStatusLabel(aiDevelopment.executionStatus) }}</div>
+                      </div>
+                      <div class="task-metric-card">
+                        <div class="task-metric-label">研发分支</div>
+                        <div class="task-metric-value">{{ aiDevelopment.developmentBranch || '-' }}</div>
+                      </div>
+                      <div class="task-metric-card">
+                        <div class="task-metric-label">Agent 任务</div>
+                        <div class="task-metric-value">{{ aiDevelopment.agentTaskId || '-' }}</div>
+                      </div>
+                    </div>
+                    <div v-if="aiDevelopment.executionMessage" class="muted-text">{{ aiDevelopment.executionMessage }}</div>
+                  </div>
+                </div>
+
+                <div v-if="submitTestReview" class="task-evaluation-section">
+                  <div class="section-title">提测 AI 审核与回执</div>
+                  <div class="task-evaluation-info-card">
+                    <div class="task-metric-grid">
+                      <div class="task-metric-card">
+                        <div class="task-metric-label">审核结论</div>
+                        <div class="task-metric-value">{{ resolveSubmitTestReviewStatusLabel(submitTestReview.reviewStatus) }}</div>
+                      </div>
+                      <div class="task-metric-card">
+                        <div class="task-metric-label">禅道测试单</div>
+                        <div class="task-metric-value">
+                          <el-link v-if="submitTestReview.zentaoTestTaskUrl" :href="submitTestReview.zentaoTestTaskUrl" target="_blank" type="primary">
+                            {{ submitTestReview.zentaoTestTaskNo }}
+                          </el-link>
+                          <template v-else>-</template>
+                        </div>
+                      </div>
+                      <div class="task-metric-card">
+                        <div class="task-metric-label">Jenkins 构建</div>
+                        <div class="task-metric-value">
+                          <el-link v-if="submitTestReview.jenkinsBuildUrl" :href="submitTestReview.jenkinsBuildUrl" target="_blank" type="primary">
+                            {{ submitTestReview.jenkinsEnvironmentCode }} #{{ submitTestReview.jenkinsBuildNumber ?? '排队中' }}
+                          </el-link>
+                          <template v-else>-</template>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="submitTestReview.humanConfirmedBy" class="muted-text">
+                      人工确认强制提测：{{ submitTestReview.humanConfirmedBy }}
+                    </div>
+                  </div>
+                </div>
+
                   <el-empty
                     v-else
                     description="当前还没有任务草稿。"
                   />
                 </div>
               </div>
+            </el-tab-pane>
+
+            <el-tab-pane :label="formatTodoTabLabel(activeDetailTodoCount)" name="todos">
+              <div class="todo-tab">
+                <div class="section-title section-title--actions">
+                  <span>需求待办</span>
+                  <el-button v-if="canManageTodo" type="primary" plain size="small" @click="openCreateTodoDialog">
+                    新增待办
+                  </el-button>
+                </div>
+                <el-table
+                  v-if="detailTodos.length"
+                  :data="detailTodos"
+                  size="small"
+                  border
+                  class="todo-table"
+                >
+                  <el-table-column prop="title" label="待办标题" min-width="180" show-overflow-tooltip />
+                  <el-table-column prop="content" label="内容" min-width="220" show-overflow-tooltip>
+                    <template #default="{ row }">
+                      {{ row.content || '-' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="96">
+                    <template #default="{ row }">
+                      <el-tag
+                        size="small"
+                        :type="resolveTodoStatusType(row.status)"
+                        :effect="isActiveIntakeTodoStatus(row.status) ? 'dark' : 'plain'"
+                        :class="{ 'todo-status-tag--active': isActiveIntakeTodoStatus(row.status) }"
+                      >
+                        {{ row.status || '-' }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="处理人" width="120">
+                    <template #default="{ row }">
+                      {{ row.assigneeUserName || '-' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="计划处理" width="150">
+                    <template #default="{ row }">
+                      {{ formatDisplayTime(row.plannedAt) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="完成时间" width="150">
+                    <template #default="{ row }">
+                      {{ formatDisplayTime(row.completedAt) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="processResult" label="处理结果" min-width="180" show-overflow-tooltip>
+                    <template #default="{ row }">
+                      {{ row.processResult || '-' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="192" fixed="right">
+                    <template #default="{ row }">
+                      <el-button v-if="canManageTodo" link type="primary" @click="openEditTodoDialog(row)">编辑</el-button>
+                      <el-button v-if="canManageTodo" link type="primary" @click="openTodoStatusDialog(row)">状态</el-button>
+                      <el-button
+                        v-if="canManageTodo"
+                        link
+                        type="danger"
+                        :loading="deletingTodoId === row.id"
+                        @click="deleteTodoFromDetail(row)"
+                      >
+                        删除
+                      </el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <el-empty v-else description="暂无需求待办" :image-size="96" />
+              </div>
+
+              <el-dialog
+                v-model="developmentRoundDialogVisible"
+                :title="developmentRoundDialogTitle"
+                width="760px"
+                append-to-body
+              >
+                <div v-if="developmentRoundDialogRun">
+                  <div class="muted-text clarification-round-meta">
+                    开始：{{ developmentRoundStartedText(developmentRoundDialogRun) }}
+                    · 结束：{{ developmentRoundFinishedText(developmentRoundDialogRun) }}
+                  </div>
+                  <div
+                    v-if="developmentRoundDialogRun.status === 'FAILED' && developmentRoundDialogRun.message"
+                    class="clarification-round-failure"
+                  >
+                    失败原因：{{ developmentRoundDialogRun.message }}
+                  </div>
+                  <template v-if="developmentRoundDialogRun.draft">
+                    <div class="task-description-block">
+                      <div class="task-description-title">评估摘要</div>
+                      <div class="task-description-content">{{ developmentRoundDialogRun.draft.summary || '—' }}</div>
+                    </div>
+                    <div v-if="(developmentRoundDialogRun.draft.requirementChangePoints || []).length" class="task-description-block">
+                      <div class="task-description-title">需求点</div>
+                      <div class="task-description-content">
+                        <div v-for="(point, i) in developmentRoundDialogRun.draft.requirementChangePoints" :key="i">{{ i + 1 }}. {{ point }}</div>
+                      </div>
+                    </div>
+                    <div class="task-description-block">
+                      <div class="task-description-title">拆解任务（{{ developmentRoundWorkItems(developmentRoundDialogRun).length }}）</div>
+                      <el-table :data="developmentRoundWorkItems(developmentRoundDialogRun)" size="small">
+                        <el-table-column type="index" label="#" width="50" />
+                        <el-table-column prop="title" label="任务" min-width="200" show-overflow-tooltip />
+                        <el-table-column label="涉及系统" min-width="140" show-overflow-tooltip>
+                          <template #default="{ row }">{{ (row.systemTags || []).join('、') || '—' }}</template>
+                        </el-table-column>
+                        <el-table-column prop="ownerUserName" label="负责人" width="90" />
+                        <el-table-column prop="estimatedEffort" label="预估工时" width="90" />
+                        <el-table-column prop="risk" label="风险" min-width="140" show-overflow-tooltip />
+                      </el-table>
+                    </div>
+                  </template>
+                  <el-empty v-else description="该轮未生成任务拆解" :image-size="48" />
+                </div>
+              </el-dialog>
             </el-tab-pane>
 
             <el-tab-pane label="识别与附件" name="materials">
@@ -4839,6 +5714,18 @@ onMounted(loadBaseData)
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+.submit-test-finding-table {
+  margin-top: 12px;
+}
+
+.submit-test-force-confirm {
+  margin: 12px 0;
+}
+
+.submit-test-environment-field {
+  margin-top: 12px;
 }
 
 .task-evaluation-layout {
@@ -5589,5 +6476,99 @@ onMounted(loadBaseData)
   padding: 18px 24px 24px;
   border-top: 1px solid #e7edf4;
   background: #fff;
+}
+
+.clarification-round-section {
+  border: 1px solid #e7edf4;
+  border-radius: 8px;
+}
+
+.ai-status-display {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid #e7edf4;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.ai-status-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ai-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.ai-status-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.ai-status-display--success .ai-status-icon { background: #67c23a; }
+.ai-status-display--danger .ai-status-icon { background: #f56c6c; }
+.ai-status-display--warning .ai-status-icon { background: #e6a23c; }
+.ai-status-display--primary .ai-status-icon { background: #409eff; }
+.ai-status-display--info .ai-status-icon { background: #909399; }
+
+.ai-status-label {
+  font-size: 22px;
+  font-weight: 700;
+  color: #303133;
+}
+
+.ai-status-message {
+  margin-top: 2px;
+  font-size: 13px;
+  color: #8a94a6;
+  max-width: 560px;
+}
+
+.ai-status-icon--spin {
+  animation: ai-status-spin 1.2s linear infinite;
+}
+
+@keyframes ai-status-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.clarification-round-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.clarification-round-meta {
+  font-size: 12px;
+  font-weight: normal;
+  color: #8a94a6;
+}
+
+.clarification-round-failure {
+  margin: -6px 0 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #fdf0f0;
+  color: #c45656;
+  font-size: 13px;
+}
+
+.clarification-round-subsection {
+  margin-top: 12px;
 }
 </style>

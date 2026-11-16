@@ -61,8 +61,11 @@ export interface ProjectGroupSaveRequest {
   groupName: string
   gitlabGroupName?: string
   description?: string
+  supportedEnvironments?: string[]
   enabled?: boolean
-  accessConfigs?: Array<Omit<ProjectGroupAccessConfig, 'id' | 'createdAt' | 'updatedAt'>>
+  accessConfigs?: Array<Omit<ProjectGroupAccessConfig, 'id' | 'createdAt' | 'updatedAt' | 'loginPasswordConfigured'> & {
+    loginPassword?: string
+  }>
 }
 
 export async function createProjectGroup(request: ProjectGroupSaveRequest): Promise<ProjectGroup> {
@@ -149,6 +152,7 @@ function normalizeBusinessLine<T extends Partial<ProjectGroup>>(businessLine: T)
     businessLineCode: code,
     businessLineName: name,
     groupName: name,
+    supportedEnvironments: Array.isArray(businessLine.supportedEnvironments) ? businessLine.supportedEnvironments : [],
     accessConfigs: Array.isArray(businessLine.accessConfigs) ? businessLine.accessConfigs : [],
   } as T & ProjectGroup
 }
@@ -185,6 +189,7 @@ function toBusinessLinePayload(request: ProjectGroupSaveRequest) {
     businessLineName: request.groupName,
     gitlabGroupName: request.gitlabGroupName,
     description: request.description,
+    supportedEnvironments: request.supportedEnvironments,
     enabled: request.enabled,
     accessConfigs: request.accessConfigs,
   }
