@@ -1,15 +1,23 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { cancelAgentRun, deleteAgentRun, replyToAgentRun, retryAgentRun } from '@/api/agent'
+import { cancelAgentRun, deleteAgentRun, replyToAgentRun, retryAgentRun, fetchStructuredAgentReport } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
 import type { AgentRun, AgentRunDetail } from '@/types/agent'
 import AgentRunAcceptancePanel from './AgentRunAcceptancePanel.vue'
 import AgentRunIssuesPanel from './AgentRunIssuesPanel.vue'
 import AgentChangesPanel from './AgentChangesPanel.vue'
 import AgentRunReconciliationPanel from './AgentRunReconciliationPanel.vue'
+import AgentReportView from './AgentReportView.vue'
+import { renderStructuredReport, structuredReportDocument, type StructuredReport } from './structuredAgentReport'
+import reportCss from './agentReport.css?inline'
+import AgentMonitorResults from './AgentMonitorResults.vue'
+import { monitorEvidence, monitorOverview } from './agentMonitorEvidence'
+import { buildAgentReportDocument } from './agentReportPresentation'
 import { errorText, eventLabels, eventSummary, localTime, prettyPayload, requestKey, statusLabels, statusTone } from './agentPresentation'
 
+const router = useRouter()
 const props = defineProps<{ detail: AgentRunDetail }>()
 const emit = defineEmits<{ refresh: []; newRun: [AgentRun] }>()
 const auth = useAuthStore()
@@ -22,47 +30,45 @@ const resultTab = ref('report')
 let replyAttempt: { text: string; key: string } | null = null
 let retryKey = requestKey()
 const run = computed(() => props.detail.run)
+const structuredReport = ref<StructuredReport | null>(null)
+const reportLoading = ref(false)
+const reportError = ref('')
+const structuredHtml = computed(() => structuredReport.value ? renderStructuredReport(structuredReport.value) : '')
+let reportEpoch = 0
+watch(() => [run.value.id, run.value.updatedAt], async () => {
+  const epoch = ++reportEpoch
+  structuredReport.value = null
+  reportError.value = ''
+  reportLoading.value = true
+  try {
+    const response = await fetchStructuredAgentReport(run.value.agentId, run.value.id)
+    if (epoch === reportEpoch) structuredReport.value = response.available ? response.report || null : null
+  } catch (cause) { if (epoch === reportEpoch) reportError.value = errorText(cause) }
+  finally { if (epoch === reportEpoch) reportLoading.value = false }
+}, { immediate: true })
+onBeforeUnmount(() => { reportEpoch++ })
 const canOperate = computed(() => auth.hasPermission('agent:task:operate'))
 const canManage = computed(() => auth.hasPermission('agent:manage'))
 const deletable = computed(() => !['QUEUED', 'RUNNING', 'CANCELLING'].includes(run.value.status))
 const terminal = computed(() => ['COMPLETED', 'FAILED', 'CANCELLED'].includes(run.value.status))
+const monitorBatches = computed(() => props.detail.events.filter(e => e.kind === 'BUSINESS_MONITOR_SUBMITTED').flatMap(e => {
+  try { const p = JSON.parse(e.payloadJson); return Number.isSafeInteger(p.monitorRunId) && p.monitorRunId > 0 ? [p.monitorRunId as number] : [] } catch { return [] }
+}))
+const monitorResults = computed(() => monitorEvidence(props.detail.events))
+const formalOverview = computed(() => monitorOverview(monitorResults.value))
+const monitorRuleCount = computed(() => monitorResults.value.reduce((total, batch) => total + batch.rules.length, 0))
 const eventRows = computed(() => props.detail.events.slice((eventPage.value - 1) * 20, eventPage.value * 20))
 
-function escapeHtml(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 function downloadReport() {
   const objective = props.detail.specification.objective || '数字员工运行报告'
   const title = props.detail.configuration?.name ? `${props.detail.configuration.name} · ${objective}` : objective
   const scopes = (props.detail.specification.scopes || []).map(scope => `${scope.businessLineCode}/${scope.environmentCode}`).join('、')
-  const html = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<title>${escapeHtml(title)}</title>
-<style>
-body{font-family:'Helvetica Neue',Arial,'PingFang SC','Microsoft YaHei',sans-serif;margin:0;padding:40px;background:#f7f8fa;color:#1f2937;line-height:1.7}
-.report{max-width:800px;margin:0 auto;background:#fff;padding:40px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
-h1{font-size:20px;margin:0 0 8px}
-.meta{color:#6b7280;font-size:12px;border-bottom:1px solid #e5e7eb;padding-bottom:16px;margin-bottom:24px}
-.meta span{display:inline-block;margin-right:16px}
-pre{white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:14px;margin:0}
-</style>
-</head>
-<body>
-<div class="report">
-<h1>${escapeHtml(title)}</h1>
-<div class="meta">
-<span>状态：${escapeHtml(statusLabels[run.value.status] || run.value.status)}</span>
-<span>范围：${escapeHtml(scopes || '未指定')}</span>
-<span>开始：${escapeHtml(localTime(run.value.createdAt))}</span>
-<span>耗时：${Math.floor(run.value.elapsedMillis / 1000)} 秒</span>
-<span>AI：${escapeHtml(props.detail.providerBinding.channelType)}${props.detail.configuration?.model ? ' · ' + escapeHtml(props.detail.configuration.model) : ''}</span>
-</div>
-<pre>${escapeHtml(run.value.resultText || '')}</pre>
-</div>
-</body>
-</html>`
+  const html = structuredReport.value ? structuredReportDocument(structuredReport.value, reportCss) : buildAgentReportDocument(title, run.value.resultText || '', [
+    `执行状态：${statusLabels[run.value.status] || run.value.status}`,
+    `范围：${scopes || '未指定'} · 开始：${localTime(run.value.createdAt)}`,
+    `运行概况：${run.value.stepCount} 次行动 · ${Math.floor(run.value.elapsedMillis / 1000)} 秒 · ${props.detail.artifacts.length} 项产物`,
+    ...(props.detail.configuration?.model ? [`模型：${props.detail.configuration.model}`] : []),
+  ], formalOverview.value)
   const url = URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' }))
   const link = document.createElement('a')
   link.href = url
@@ -116,10 +122,14 @@ async function sendReply() {
 
 <template>
   <section class="run-panel">
+    <div v-if="monitorBatches.length" class="monitor-batches">
+      <strong>本轮业务监测</strong>
+      <el-button v-for="id in monitorBatches" :key="id" link type="primary" @click="router.push({ path: '/ops/accounting', query: { runId: id } })">核对批次 #{{ id }} · 规则结果与实际 SQL</el-button>
+    </div>
     <div class="run-heading">
-      <div><el-tag :type="statusTone(run.status)">{{ statusLabels[run.status] || run.status }}</el-tag><span class="run-meta">{{ run.stepCount }} 次行动 · {{ Math.floor(run.elapsedMillis / 1000) }} 秒 · {{ localTime(run.createdAt) }}</span></div>
+      <div class="run-heading-title"><span>执行状态</span><el-tag :type="statusTone(run.status)">{{ statusLabels[run.status] || run.status }}</el-tag><span class="run-meta">{{ localTime(run.createdAt) }}</span></div>
       <div>
-        <el-button v-if="run.resultText" @click="downloadReport">下载报告 (HTML)</el-button>
+        <el-button v-if="run.resultText || structuredReport" :disabled="reportLoading || !!reportError" @click="downloadReport">下载报告 (HTML)</el-button>
         <template v-if="canOperate">
           <el-button v-if="!terminal && !run.cancelRequested" :disabled="busy" @click="cancel">停止运行</el-button>
           <el-button v-if="run.retryAllowed" :loading="busy" @click="retry">重试</el-button>
@@ -127,7 +137,10 @@ async function sendReply() {
         <el-button v-if="canManage && deletable" type="danger" plain :loading="busy" @click="removeRun">删除记录</el-button>
       </div>
     </div>
-    <p class="run-meta">本次 AI：{{ detail.providerBinding.channelType }} · {{ detail.configuration.model || '未记录模型' }} · 接入配置版本 {{ detail.providerBinding.configurationVersion }}</p>
+    <div class="run-facts" aria-label="运行概况">
+      <span>运行概况</span><span><strong>{{ run.stepCount }}</strong> 次行动</span><span><strong>{{ Math.floor(run.elapsedMillis / 1000) }}</strong> 秒</span><span><strong>{{ detail.artifacts.length }}</strong> 项产物</span>
+    </div>
+    <details class="run-technical"><summary>运行信息</summary><p class="run-meta">模型：{{ detail.configuration.model || '未记录模型' }}</p></details>
     <p v-if="detail.specification.expectedArtifacts.some(kind => ['DEPLOYMENT', 'VERIFICATION'].includes(kind))" class="run-meta">本轮完成目标：{{ detail.specification.completionTargets?.length ? detail.specification.completionTargets.map(scope => `${scope.businessLineCode} / ${scope.environmentCode === 'TEST' ? '测试' : '生产'}`).join('、') : '尚未明确，请重新分派任务' }}</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="feedback" />
     <el-alert v-if="run.errorMessage" :title="run.errorMessage" :type="run.status === 'FAILED' ? 'error' : 'warning'" :closable="false" show-icon class="feedback" />
@@ -137,7 +150,10 @@ async function sendReply() {
       <el-tab-pane label="结果与产物" name="result">
         <el-tabs v-model="resultTab" class="result-subtabs">
           <el-tab-pane label="结果报告" name="report">
-            <pre v-if="run.resultText" class="result-text">{{ run.resultText }}</pre>
+            <el-alert v-if="reportError" :title="`报告读取失败：${reportError}`" type="error" :closable="false" />
+            <p v-else-if="reportLoading">正在读取报告…</p>
+            <article v-else-if="structuredReport" class="agent-report" aria-label="结构化报告" v-html="structuredHtml" />
+            <AgentReportView v-else-if="run.resultText" :text="run.resultText" :formal-overview="formalOverview" />
             <el-empty v-else description="尚未返回最终结果" :image-size="56" />
             <div v-for="artifact in detail.artifacts" :key="artifact.id" class="artifact">
               <strong>{{ artifact.kind === 'REPORT' ? '分析报告' : artifact.kind }}</strong>
@@ -146,7 +162,11 @@ async function sendReply() {
               <details><summary>查看产物内容与校验值</summary><pre>{{ prettyPayload(artifact.payloadJson) }}</pre><code>{{ artifact.contentHash }}</code></details>
             </div>
           </el-tab-pane>
-          <AgentRunIssuesPanel :detail="detail" @refresh="emit('refresh')" />
+          <el-tab-pane v-if="monitorBatches.length" :label="`业务监测（${monitorRuleCount} 条规则）`" name="monitor-evidence">
+            <AgentMonitorResults v-if="monitorResults.length" :batches="monitorResults" />
+            <el-empty v-else description="已关联核对批次，尚未取得最终规则结果" :image-size="48" />
+          </el-tab-pane>
+          <AgentRunIssuesPanel :grouped="!monitorBatches.length" :detail="detail" @refresh="emit('refresh')" />
         </el-tabs>
       </el-tab-pane>
       <el-tab-pane v-if="auth.hasPermission('agent:task:view')" label="产物验收" name="acceptance">
@@ -175,18 +195,24 @@ async function sendReply() {
 </template>
 
 <style scoped>
-.run-panel { border-top: 1px solid #e5e7eb; padding-top: 20px; margin-top: 22px; }
+.run-panel { min-width: 0; }
 .result-subtabs :deep(.el-tabs__header) { margin-bottom: 12px; }
 .run-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.run-heading-title { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; color: #637582; }
+.run-heading > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; }
+.run-heading .el-button + .el-button { margin-left: 0; }
+.run-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 16px; font-size: 12px; color: #637582; margin: 16px 0 10px; }
+.run-facts strong { font-size: 17px; color: #304b57; }
+.run-technical { margin-bottom: 16px; }
 .run-meta { color: #6b7280; font-size: 12px; margin-left: 10px; }
 .feedback { margin: 12px 0; }
 pre, .event-summary { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
 pre { max-height: 500px; overflow: auto; padding: 12px; background: #f6f8fa; border-radius: 6px; font-size: 12px; }
-.result-text { font-family: inherit; font-size: 14px; background: transparent; padding: 0; }
 .artifact { padding: 16px 0; border-top: 1px solid #f0f1f3; }
 .artifact .el-tag { margin-left: 12px; }
 summary { color: #64748b; font-size: 12px; cursor: pointer; margin-top: 8px; }
 code { font-size: 11px; overflow-wrap: anywhere; }
 .reply-box { display: grid; gap: 10px; margin-top: 20px; }
 .reply-box .el-button { justify-self: end; }
+@media (max-width: 800px) { .run-heading { align-items: flex-start; flex-direction: column; } }
 </style>
