@@ -289,7 +289,7 @@ onUnmounted(() => { active = false; runEpoch++; detailEpoch++ })
     </el-dialog>
     <AgentConfigDialog v-model="configOpen" :agent="editing" :options="options" @saved="agentSaved" />
     <AgentTaskDialog v-model="taskOpen" :agent="taskListAgent" :options="options" :task="editingTask" @saved="taskSaved" />
-    <el-dialog v-model="drawer" title="任务成果" width="min(1480px, 96vw)" top="3vh" class="task-dialog">
+    <el-dialog v-model="drawer" title="任务成果" fullscreen class="task-dialog">
       <template v-if="activeTask">
         <h3 class="task-objective">{{ activeTask.specification.objective }}</h3>
         <p v-if="activeTask.specification.acceptanceCriteria" class="description">验收：{{ activeTask.specification.acceptanceCriteria }}</p>
@@ -364,7 +364,7 @@ h2, h3 { margin: 0; }
 .run-reading { min-width: 0; min-height: 260px; padding: 0 6px 20px 0; }
 .history-toggle { display: none; }
 :global(.el-drawer__footer) { border-top: 1px solid var(--el-border-color-lighter); padding: 12px 20px; }
-:global(.task-dialog .el-dialog__body) { max-height: calc(90vh - 110px); overflow-y: auto; }
+:global(.task-dialog .el-dialog__body) { max-height: calc(100vh - 110px); overflow-y: auto; }
 :global(.task-list-dialog .el-dialog__body) { max-height: calc(88vh - 110px); overflow-y: auto; }
 @media (max-width: 1000px) { .run-workspace { grid-template-columns: minmax(0, 1fr); gap: 18px; } .run-history { display: none; } .run-history.history-open { display: block; } .history-toggle { display: inline-flex; margin-right: auto; } .history-list { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); } .drawer-toolbar { flex-wrap: wrap; } }
 @media (max-width: 800px) { .page-header { flex-direction: column; align-items: flex-start; } .agent-card { padding: 14px; } }
