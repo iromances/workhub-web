@@ -55,8 +55,6 @@ const scheduleError = ref('')
 const schedule = reactive<AgentSchedule>({ expectedVersion: null, mode: 'MANUAL', cronExpression: null, zoneId: 'Asia/Shanghai', misfirePolicy: 'RUN_ONCE', enabled: false })
 let active = true
 let initialized = false
-let timer: ReturnType<typeof setInterval> | undefined
-let polling = false
 let agentEpoch = 0
 let taskEpoch = 0
 let runEpoch = 0
@@ -255,19 +253,10 @@ async function saveSchedule() {
   } catch (cause) { scheduleError.value = errorText(cause) }
   finally { operating.value = false }
 }
-function stopPolling() { if (timer) clearInterval(timer); timer = undefined }
-function startPolling() {
-  stopPolling()
-  timer = setInterval(async () => {
-    if (!active || !drawer.value || polling || operating.value) return
-    polling = true
-    try { await loadRuns(true) } finally { polling = false }
-  }, 5000)
-}
-onMounted(async () => { await initialize(); startPolling() })
-onActivated(() => { active = true; startPolling(); if (initialized) { void loadAgents(); void loadRuns(true) } })
-onDeactivated(() => { active = false; runEpoch++; detailEpoch++; stopPolling() })
-onUnmounted(() => { active = false; runEpoch++; detailEpoch++; stopPolling() })
+onMounted(async () => { await initialize() })
+onActivated(() => { active = true; if (initialized) { void loadAgents(); void loadRuns(true) } })
+onDeactivated(() => { active = false; runEpoch++; detailEpoch++ })
+onUnmounted(() => { active = false; runEpoch++; detailEpoch++ })
 </script>
 
 <template>
