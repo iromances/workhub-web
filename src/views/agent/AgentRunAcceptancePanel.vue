@@ -51,10 +51,11 @@ onUnmounted(() => { active = false; clear() })
         </div>
         <details v-if="item.evidence.length"><summary>查看证据引用</summary>
           <div v-for="evidence in item.evidence" :key="evidence.id" class="evidence">
-            <span>{{ evidence.kind === 'CHANGE_SET' ? '交付清单' : '产物' }}：{{ evidence.id }}</span>
+            <span>{{ evidence.kind === 'CHANGE_SET' ? '交付清单' : evidence.kind === 'EVENT' ? '执行记录' : '产物' }}：{{ evidence.id }}</span>
             <code>{{ evidence.contentHash }}</code>
           </div>
-          <p v-if="item.kind === 'CHANGE_SET'" class="meta">准确提交、实际分支及 MR 核验记录可在“候选变更”中查看。</p>
+          <p v-if="item.evidence.some(evidence => evidence.kind === 'EVENT')" class="meta">准确提交和远端分支的核验凭据可在“执行记录”的“原生 CLI 交付核验”中查看。</p>
+          <p v-else-if="item.kind === 'CHANGE_SET'" class="meta">准确提交、实际分支及 MR 核验记录可在“候选变更”中查看。</p>
         </details>
       </article>
     </template>

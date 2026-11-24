@@ -87,7 +87,8 @@ export async function fetchXxlJobDetail(
     pageSize?: number
     author?: string
     executorAppName?: string
-    logStatus?: 'ALL' | 'ABNORMAL' | 'SUCCESS' | 'RUNNING' | 'STUCK' | 'EXECUTION_FAILED'
+    /** 单个或逗号分隔多选：ALL/ABNORMAL/SUCCESS/RUNNING/STUCK/EXECUTION_FAILED */
+    logStatus?: string
   },
 ): Promise<XxlJobDashboard> {
   const response = await http.get<ApiResponse<XxlJobDashboard>>(`/ops/monitors/${id}/xxl-job/detail`, { params })
@@ -103,7 +104,8 @@ export async function fetchXxlJobLogs(
     pageSize?: number
     author?: string
     executorAppName?: string
-    logStatus?: 'ALL' | 'ABNORMAL' | 'SUCCESS' | 'RUNNING' | 'STUCK' | 'EXECUTION_FAILED'
+    /** 单个或逗号分隔多选：ALL/ABNORMAL/SUCCESS/RUNNING/STUCK/EXECUTION_FAILED；页面多选传 4 态逗号串 */
+    logStatus?: string
   },
 ): Promise<XxlJobLogPage> {
   const response = await http.get<ApiResponse<XxlJobLogPage>>(`/ops/monitors/${id}/xxl-job/logs`, { params })

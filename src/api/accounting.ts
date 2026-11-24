@@ -3,9 +3,9 @@ import type {
   AccountingManualRunRequest,
   AccountingMonitorConfig,
   AccountingMonitorSaveRequest,
-  AccountingRule,
   AccountingRun,
   AccountingRunDetail,
+  AccountingScenarioType,
 } from '@/types/accounting'
 import type { ApiResponse, PageResponse } from '@/types/http'
 
@@ -41,16 +41,15 @@ export async function updateAccountingConfig(
   return response.data.data
 }
 
-export async function fetchAccountingRules(ruleProfile: string): Promise<AccountingRule[]> {
-  const response = await http.get<ApiResponse<AccountingRule[]>>('/ops/accounting/rules', {
-    params: { ruleProfile },
-  })
+export async function fetchAccountingScenarios(): Promise<AccountingScenarioType[]> {
+  const response = await http.get<ApiResponse<AccountingScenarioType[]>>('/ops/accounting/scenarios')
   return response.data.data
 }
 
 export async function fetchAccountingRuns(params?: {
   businessLineCode?: string
   status?: string
+  configId?: number
   page?: number
   pageSize?: number
 }): Promise<PageResponse<AccountingRun>> {
@@ -71,4 +70,22 @@ export async function submitAccountingManualRun(request: AccountingManualRunRequ
 export async function retryAccountingRun(id: number): Promise<AccountingRun> {
   const response = await http.post<ApiResponse<AccountingRun>>(`/ops/accounting/runs/${id}/retry`)
   return response.data.data
+}
+
+export interface AccountingSqlEvidence {
+  id: number; monitorRunId: number; sqlCode: string; ruleFamily: string; parametersJson: string;
+  templateHash: string; renderedSql: string; status: string; rowCount: number | null;
+  durationMs: number; errorMessage: string | null; startedAt: string; finishedAt: string;
+}
+export interface AccountingRuleFamily {
+  code: string; name: string; sqlCodes: string[]; checks: { id: string; name: string; severity: string; note: string }[];
+}
+export async function fetchAccountingSqlEvidence(id: number, page = 1, family?: string) {
+  const r = await http.get<ApiResponse<PageResponse<AccountingSqlEvidence>>>(`/ops/accounting/runs/${id}/sql-evidence`, { params: { page, pageSize: 20, family: family || undefined } }); return r.data.data
+}
+export async function fetchAccountingAgentRuns(id: number) {
+  const r = await http.get<ApiResponse<string[]>>(`/ops/accounting/runs/${id}/agent-runs`); return r.data.data
+}
+export async function fetchAccountingRules(id: number) {
+  const r = await http.get<ApiResponse<AccountingRuleFamily[]>>(`/ops/accounting/configs/${id}/rules`); return r.data.data
 }

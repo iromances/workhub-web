@@ -1,6 +1,6 @@
 export const monitoringTools: Record<string, string> = {
-  'monitor.business.status': '业务监测状态', 'monitor.business.detail': '业务运行详情',
-  'monitor.accounting.status': '账务监测状态', 'monitor.accounting.detail': '账务规则结果',
+  'monitor.business.status': '服务监测状态', 'monitor.business.detail': '业务运行详情',
+  'monitor.accounting.status': '业务监测状态', 'monitor.accounting.detail': '账务规则结果',
   'monitor.accounting.runs': '账务历史运行', 'monitor.system.alerts': '系统预警', 'workhub.logs': '运行日志',
 }
 export const assessmentLabels: Record<string, string> = { PASS: '判断通过', FAIL: '判断未通过', INCONCLUSIVE: '暂无法判定' }

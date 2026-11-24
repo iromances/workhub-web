@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { cancelAgentRun, deleteAgentRun, replyToAgentRun, retryAgentRun, fetchStructuredAgentReport } from '@/api/agent'
 import { useAuthStore } from '@/stores/auth'
-import type { AgentRun, AgentRunDetail } from '@/types/agent'
+import type { AgentRun, AgentRunDetail, AgentOptions } from '@/types/agent'
 import AgentRunAcceptancePanel from './AgentRunAcceptancePanel.vue'
 import AgentRunIssuesPanel from './AgentRunIssuesPanel.vue'
 import AgentChangesPanel from './AgentChangesPanel.vue'
@@ -18,7 +18,7 @@ import { buildAgentReportDocument } from './agentReportPresentation'
 import { errorText, eventLabels, eventSummary, localTime, prettyPayload, requestKey, statusLabels, statusTone } from './agentPresentation'
 
 const router = useRouter()
-const props = defineProps<{ detail: AgentRunDetail }>()
+const props = defineProps<{ detail: AgentRunDetail; businessLines?: AgentOptions['scopes'] }>()
 const emit = defineEmits<{ refresh: []; newRun: [AgentRun] }>()
 const auth = useAuthStore()
 const busy = ref(false)
@@ -33,7 +33,8 @@ const run = computed(() => props.detail.run)
 const structuredReport = ref<StructuredReport | null>(null)
 const reportLoading = ref(false)
 const reportError = ref('')
-const structuredHtml = computed(() => structuredReport.value ? renderStructuredReport(structuredReport.value) : '')
+const reportContext = computed(() => ({ businessLines: props.businessLines }))
+const structuredHtml = computed(() => structuredReport.value ? renderStructuredReport(structuredReport.value, reportContext.value) : '')
 let reportEpoch = 0
 watch(() => [run.value.id, run.value.updatedAt], async () => {
   const epoch = ++reportEpoch
@@ -63,7 +64,7 @@ function downloadReport() {
   const objective = props.detail.specification.objective || '数字员工运行报告'
   const title = props.detail.configuration?.name ? `${props.detail.configuration.name} · ${objective}` : objective
   const scopes = (props.detail.specification.scopes || []).map(scope => `${scope.businessLineCode}/${scope.environmentCode}`).join('、')
-  const html = structuredReport.value ? structuredReportDocument(structuredReport.value, reportCss) : buildAgentReportDocument(title, run.value.resultText || '', [
+  const html = structuredReport.value ? structuredReportDocument(structuredReport.value, reportCss, reportContext.value) : buildAgentReportDocument(title, run.value.resultText || '', [
     `执行状态：${statusLabels[run.value.status] || run.value.status}`,
     `范围：${scopes || '未指定'} · 开始：${localTime(run.value.createdAt)}`,
     `运行概况：${run.value.stepCount} 次行动 · ${Math.floor(run.value.elapsedMillis / 1000)} 秒 · ${props.detail.artifacts.length} 项产物`,

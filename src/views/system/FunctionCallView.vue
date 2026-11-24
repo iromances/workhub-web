@@ -3,7 +3,7 @@
     <div class="page-toolbar">
       <h2 class="page-title">Function Call</h2>
       <p class="page-subtitle">
-        业务库只读查询统一入口：场景 SQL 集中登记（场景编码 ↔ SQL 编码），业务监测等场景按编码调用；
+        业务库只读查询统一入口：场景 SQL 集中登记（场景编码 ↔ SQL 编码），服务监测等场景按编码调用；
         修改保存后即时生效。
       </p>
     </div>
@@ -419,7 +419,7 @@ async function toggleEnabled(row: FuncCallSqlItem) {
   const action = row.enabled ? '停用' : '启用'
   try {
     await ElMessageBox.confirm(
-      `确定${action}「${row.sqlCode}」？${row.enabled ? '停用后依赖该模板的业务监测调用将立即报错。' : ''}`,
+      `确定${action}「${row.sqlCode}」？${row.enabled ? '停用后依赖该模板的服务监测调用将立即报错。' : ''}`,
       `${action} SQL`,
       { type: 'warning' },
     )

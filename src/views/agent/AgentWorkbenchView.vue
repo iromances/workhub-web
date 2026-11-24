@@ -262,7 +262,7 @@ onUnmounted(() => { active = false; runEpoch++; detailEpoch++ })
 <template>
   <div class="agent-workbench">
     <section class="page-card agent-card">
-      <div class="page-header"><div><h2>数字员工</h2><p class="description">配置 AI 助手，分派巡检或其他任务，跟踪执行与产物。</p></div><div><el-button @click="initialize">刷新</el-button><el-button v-if="canManage" type="primary" @click="configure(null)">创建 Agent</el-button></div></div>
+      <div class="page-header"><div><h2>数字员工</h2></div><div><el-button @click="initialize">刷新</el-button><el-button v-if="canManage" type="primary" @click="configure(null)">创建 Agent</el-button></div></div>
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="feedback" />
       <el-table v-loading="loading" :data="agents" row-key="id" highlight-current-row @row-click="selectAgent">
         <el-table-column label="Agent" min-width="190"><template #default="{ row }"><strong>{{ row.configuration.name }}</strong><div class="muted line-clamp">{{ row.configuration.instructions }}</div></template></el-table-column>
@@ -311,7 +311,7 @@ onUnmounted(() => { active = false; runEpoch++; detailEpoch++ })
           </aside>
           <main class="run-reading" v-loading="detailLoading" aria-label="所选运行成果">
             <el-alert v-if="detailError" :title="detailError" type="error" :closable="false" show-icon><el-button link @click="loadRunDetail(selectedRunId)">重新加载报告</el-button></el-alert>
-            <AgentRunPanel v-if="detail" :key="detail.run.id" :detail="detail" @refresh="loadRuns(true)" @new-run="newRun" />
+            <AgentRunPanel v-if="detail" :key="detail.run.id" :detail="detail" :business-lines="options.scopes" @refresh="loadRuns(true)" @new-run="newRun" />
             <el-empty v-else-if="!detailLoading && !detailError && !runsLoading" :description="runs.length ? '选择一轮运行查看成果' : '运行后将在这里展示结论与报告'" :image-size="64" />
           </main>
         </div>

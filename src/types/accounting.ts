@@ -1,6 +1,13 @@
-export type AccountingGranularity = 'HOURLY' | 'DAILY'
+export type AccountingGranularity = 'HOURLY' | 'DAILY' | 'SCENARIO'
 export type AccountingRunStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'WARNING' | 'PARTIAL' | 'FAILED'
 export type AccountingResultStatus = 'PASS' | 'WARN' | 'ERROR' | 'FAILED' | 'SKIPPED'
+export type AccountingScenarioTypeCode =
+  | 'BATCH_WITHHOLD'
+  | 'COMPENSATION'
+  | 'BUYBACK'
+  | 'PAYMENT'
+  | 'CLEARING_SETTLE'
+  | 'ACCOUNTING_INTEGRITY'
 
 export interface AccountingMonitorConfig {
   id: number
@@ -9,11 +16,16 @@ export interface AccountingMonitorConfig {
   environmentCode: string
   systemName: string
   displayName: string
-  databaseTargetKey: string | null
-  schemaName: string
-  ruleProfile: string
+  scenarioType: AccountingScenarioTypeCode
+  expectedTime: string | null
+  checkTime: string
+  expectedCountSqlCode: string | null
+  expectedFixedCount: number | null
+  actualCountSqlCode: string | null
+  successCountSqlCode: string | null
+  toleranceRate: number
+  alertEnabled: boolean
   enabled: boolean
-  dailyEnabled: boolean
   remark: string | null
   createdAt: string
   updatedAt: string
@@ -29,8 +41,8 @@ export interface AccountingRun {
   systemName: string
   displayName: string
   triggerType: 'MANUAL' | 'SCHEDULED' | 'RETRY'
-  startTime: string
-  endTime: string
+  startTime: string | null
+  endTime: string | null
   ruleCodes: string | null
   status: AccountingRunStatus
   ruleTotal: number
@@ -63,14 +75,17 @@ export interface AccountingResult {
   createdAt: string
 }
 
-export interface AccountingRule {
-  ruleCode: string
-  ruleName: string
-  category: string
-  granularity: AccountingGranularity
-  severity: 'WARN' | 'ERROR'
+export interface AccountingScenarioDimension {
+  dimensionCode: string
+  name: string
   description: string
-  ruleProfile: string
+}
+
+export interface AccountingScenarioType {
+  type: AccountingScenarioTypeCode
+  name: string
+  description: string
+  dimensions: AccountingScenarioDimension[]
 }
 
 export interface AccountingDashboardSummary {
@@ -97,23 +112,28 @@ export interface AccountingRunDetail {
   results: AccountingResult[]
 }
 
+export type ExpectedCountSource = 'SQL' | 'FIXED'
+
 export interface AccountingMonitorSaveRequest {
   businessLineCode: string
   environmentCode: string
   systemName: string
   displayName: string
-  databaseTargetKey?: string
-  schemaName: string
-  ruleProfile: string
+  scenarioType: AccountingScenarioTypeCode
+  expectedTime?: string | null
+  checkTime: string
+  expectedCountSqlCode?: string | null
+  expectedFixedCount?: number | null
+  actualCountSqlCode: string | null
+  successCountSqlCode?: string | null
+  toleranceRate: number
+  alertEnabled: boolean
   enabled: boolean
-  dailyEnabled: boolean
   remark?: string
 }
 
 export interface AccountingManualRunRequest {
   configId: number
-  startTime: string
-  endTime: string
-  ruleCodes?: string[]
+  checkDate?: string | null
   requestKey: string
 }

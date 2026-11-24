@@ -1,6 +1,7 @@
 export interface AgentScope { businessLineCode: string; environmentCode: string }
 export interface AgentConfiguration {
   name: string
+  position: string
   instructions: string
   providerConfigId: number
   model: string | null
@@ -8,6 +9,8 @@ export interface AgentConfiguration {
   maxSteps: number
   maxRunSeconds: number
   maxConcurrentRuns: number
+  alertLevel?: string
+  alertChannels?: string[]
 }
 export interface AgentDefinition {
   id: string
@@ -23,11 +26,15 @@ export type AgentAnalysisScope = 'FULL' | 'INCREMENTAL'
 export interface AgentTaskSpecification {
   objective: string
   context: string | null
-  acceptanceCriteria: string
+  acceptanceCriteria: string | null
   expectedArtifacts: AgentArtifactKind[]
   completionTargets: AgentScope[]
   scopes: AgentScope[]
+  monitorMode?: 'OBSERVE' | 'EXECUTE_CONFIGURED'
+  monitorConfigIds?: number[]
+  monitorCheckDate?: string | null
   analysisScope?: AgentAnalysisScope
+  webhookUrl?: string | null
 }
 export interface AgentSchedule {
   expectedVersion: number | null
@@ -90,12 +97,13 @@ export interface AgentRunAcceptance {
   checkedAt: string
   satisfied: boolean
   items: { kind: AgentArtifactKind; status: 'SATISFIED' | 'MISSING' | 'BLOCKED' | 'UNAVAILABLE'; message: string
-    evidence: { kind: 'ARTIFACT' | 'CHANGE_SET'; id: string; contentHash: string }[]
+    evidence: { kind: 'ARTIFACT' | 'CHANGE_SET' | 'EVENT'; id: string; contentHash: string }[]
     targets?: { scope: AgentScope; status: string; message: string; evidence: { kind: string; id: string; contentHash: string }[] }[] }[]
 }
 export interface AgentOptions {
   providers: { id: number; code: string; name: string; channelType: string; defaultModel: string | null; enabled: boolean }[]
   scopes: { businessLineCode: string; businessLineName: string; environments: string[] }[]
+  positions: { code: string; name: string }[]
 }
 
 export type AgentReconciliationAction = 'RESUME' | 'WAIT_INPUT' | 'CANCEL'

@@ -131,7 +131,7 @@ const router = createRouter({
           path: 'ops/monitors',
           name: 'ops-monitors',
           component: () => import('@/views/ops/OpsMonitorView.vue'),
-          meta: { title: '业务监测', activeMenu: '/ops/monitors', permission: 'ops:monitor:view' },
+          meta: { title: '服务监测', activeMenu: '/ops/monitors', permission: 'ops:monitor:view' },
         },
         {
           path: 'ops/jobs',
@@ -145,7 +145,7 @@ const router = createRouter({
           path: 'ops/accounting',
           name: 'ops-accounting',
           component: () => import('@/views/ops/AccountingMonitorView.vue'),
-          meta: { title: '账务监测', activeMenu: '/ops/accounting', permission: 'ops:accounting:view' },
+          meta: { title: '业务监测', activeMenu: '/ops/accounting', permission: 'ops:accounting:view' },
         },
         {
           path: 'ops/system-alerts',

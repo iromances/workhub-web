@@ -50,3 +50,5 @@ export const reviewAgentIssue = (issue: AgentIssue, decision: 'APPROVE' | 'REJEC
   data(http.put<ApiResponse<AgentIssue>>(`/agent-issues/${segment(issue.id)}`, { expectedVersion: issue.version, decision, note }))
 export const deployAgentIssue = (issue: AgentIssue, outcome: 'PASS' | 'FAIL') =>
   data(http.post<ApiResponse<AgentIssue>>(`/agent-issues/${segment(issue.id)}/deploy`, { outcome }))
+
+export const fetchStructuredAgentReport = (agentId: string, runId: string) => data(http.get<ApiResponse<{ available: boolean; report?: import('@/types/agentReport').StructuredReport }>>(`/agents/${segment(agentId)}/runs/${segment(runId)}/report`))

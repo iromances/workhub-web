@@ -60,7 +60,7 @@ const logFilters = reactive({
   dateRange: [] as string[],
   author: '',
   executorAppName: '',
-  logStatus: '' as '' | 'SUCCESS' | 'RUNNING' | 'STUCK' | 'EXECUTION_FAILED',
+  logStatus: [] as ('SUCCESS' | 'RUNNING' | 'STUCK' | 'EXECUTION_FAILED')[],
   page: 1,
   pageSize: 20,
 })
@@ -367,7 +367,7 @@ function resetLogFilters() {
   logFilters.dateRange = [formatDate(start), formatDate(end)]
   logFilters.author = ''
   logFilters.executorAppName = ''
-  logFilters.logStatus = ''
+  logFilters.logStatus = ['STUCK', 'EXECUTION_FAILED']
   logFilters.page = 1
   logFilters.pageSize = 20
 }
@@ -412,7 +412,7 @@ async function loadLogs() {
       pageSize: logFilters.pageSize,
       author: logFilters.author.trim() || undefined,
       executorAppName: logFilters.executorAppName.trim() || undefined,
-      logStatus: logFilters.logStatus || undefined,
+      logStatus: logFilters.logStatus.length ? logFilters.logStatus.join(',') : undefined,
     })
   } catch (error) {
     ElMessage.error('加载 XXL-JOB 执行日志失败')
@@ -992,7 +992,15 @@ onMounted(async () => {
         />
       </el-form-item>
       <el-form-item label="状态">
-        <el-select v-model="logFilters.logStatus" clearable placeholder="全部状态" style="width: 170px">
+        <el-select
+          v-model="logFilters.logStatus"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          clearable
+          placeholder="全部状态"
+          style="width: 240px"
+        >
           <el-option label="执行成功" value="SUCCESS" />
           <el-option label="执行中" value="RUNNING" />
           <el-option label="卡死（回调丢失）" value="STUCK" />

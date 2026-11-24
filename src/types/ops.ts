@@ -256,15 +256,6 @@ export interface SystemAlertScopeSaveRequest {
   remark?: string
 }
 
-export interface SystemAlertSubsystemSummary {
-  businessLineCode: string
-  environmentCode: string
-  subsystemName: string
-  serviceName: string
-  errorCount: number
-  latestOccurredAt: string | null
-}
-
 export type SystemAlertEventCategory = 'SYSTEM_ERROR' | 'SLOW_SQL'
 
 export type SystemAlertRuleAction = 'IGNORE' | 'SLOW_SQL' | 'SYSTEM_ERROR'
@@ -321,7 +312,6 @@ export interface SystemAlertDashboard {
   page: number
   pageSize: number
   subsystems: SystemAlertSubsystem[]
-  summaries: SystemAlertSubsystemSummary[]
   events: SystemAlertEvent[]
 }
 

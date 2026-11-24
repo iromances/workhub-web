@@ -79,6 +79,7 @@ function toggleIncludeClosed(value: boolean | string | number) {
 function resolveStatusTagType(status: string | null | undefined) {
   switch (status) {
     case '开发中':
+    case '开发完成':
       return 'primary'
     case '测试中':
     case '待验收':

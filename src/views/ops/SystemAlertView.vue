@@ -62,14 +62,12 @@ const ruleDrawerVisible = ref(false)
 const editingId = ref<number | null>(null)
 const editingRuleId = ref<number | null>(null)
 const activeTab = ref<'systemError' | 'slowSql' | 'scopes' | 'rules'>('systemError')
-const activeSystemErrorTab = ref<'summary' | 'events'>('events')
 const businessLines = ref<ProjectGroup[]>([])
 const dashboard = ref<SystemAlertDashboard>({
   totalCount: 0,
   page: 1,
   pageSize: 20,
   subsystems: [],
-  summaries: [],
   events: [],
 })
 const scopes = ref<SystemAlertScope[]>([])
@@ -91,9 +89,9 @@ const environmentOptions = [
 
 const levelOptions = ['ERROR', 'WARN', 'INFO']
 
-type TimeRangeShortcut = {
+type DateShortcut = {
   text: string
-  value: () => [Date, Date]
+  value: () => Date
 }
 
 function startOfDay(date: Date) {
@@ -102,34 +100,20 @@ function startOfDay(date: Date) {
   return result
 }
 
-function endOfDay(date: Date) {
-  const result = new Date(date)
-  result.setHours(23, 59, 59, 999)
+function daysAgoStart(days: number) {
+  const result = startOfDay(new Date())
+  result.setDate(result.getDate() - days)
   return result
 }
 
-function recentDaysRange(days: number): [Date, Date] {
-  const end = new Date()
-  const start = startOfDay(end)
-  start.setDate(start.getDate() - days + 1)
-  return [start, end]
-}
-
-const timeRangeShortcuts: TimeRangeShortcut[] = [
-  { text: '今天', value: () => recentDaysRange(1) },
-  {
-    text: '昨天',
-    value: () => {
-      const yesterday = new Date()
-      yesterday.setDate(yesterday.getDate() - 1)
-      return [startOfDay(yesterday), endOfDay(yesterday)]
-    },
-  },
-  { text: '最近三天', value: () => recentDaysRange(3) },
-  { text: '最近7天', value: () => recentDaysRange(7) },
-  { text: '最近15天', value: () => recentDaysRange(15) },
-  { text: '最近30天', value: () => recentDaysRange(30) },
-  { text: '最近90天', value: () => recentDaysRange(90) },
+const startTimeShortcuts: DateShortcut[] = [
+  { text: '今天', value: () => startOfDay(new Date()) },
+  { text: '昨天', value: () => daysAgoStart(1) },
+  { text: '最近三天', value: () => daysAgoStart(2) },
+  { text: '最近7天', value: () => daysAgoStart(6) },
+  { text: '最近15天', value: () => daysAgoStart(14) },
+  { text: '最近30天', value: () => daysAgoStart(29) },
+  { text: '最近90天', value: () => daysAgoStart(89) },
 ]
 
 const filters = reactive({
@@ -138,7 +122,8 @@ const filters = reactive({
   serviceName: '',
   level: 'ERROR',
   messageKeyword: '',
-  timeRange: null as [string, string] | null,
+  startTime: null as string | null,
+  endTime: null as string | null,
   page: 1,
   pageSize: 20,
 })
@@ -170,9 +155,6 @@ const serviceOptions = computed(() => {
   for (const item of dashboard.value.subsystems) {
     options.set(item.serviceName, item)
   }
-  for (const item of dashboard.value.summaries) {
-    options.set(item.serviceName, item)
-  }
   for (const scope of scopes.value) {
     for (const item of scope.services) {
       options.set(item.serviceName, item)
@@ -192,9 +174,6 @@ const activeEventCategory = computed<SystemAlertEventCategory>(() =>
   activeTab.value === 'slowSql' ? 'SLOW_SQL' : 'SYSTEM_ERROR',
 )
 const eventDisplayName = computed(() => activeTab.value === 'slowSql' ? '慢 SQL' : '系统异常')
-const eventMetricLabel = computed(() => activeTab.value === 'slowSql' ? '慢 SQL 事件' : '系统异常事件')
-const eventCountLabel = computed(() => activeTab.value === 'slowSql' ? '慢 SQL 数' : '系统异常数')
-const eventSummaryLabel = computed(() => activeTab.value === 'slowSql' ? '慢 SQL 汇总' : '系统异常汇总')
 
 function readableTime(value?: string | null) {
   return value ? value.replace('T', ' ') : '-'
@@ -260,8 +239,8 @@ async function loadDashboard() {
       level: filters.level || undefined,
       eventCategory: activeEventCategory.value,
       messageKeyword: filters.messageKeyword.trim() || undefined,
-      startTime: filters.timeRange?.[0],
-      endTime: filters.timeRange?.[1],
+      startTime: filters.startTime || undefined,
+      endTime: filters.endTime || undefined,
       page: filters.page,
       pageSize: filters.pageSize,
     })
@@ -782,7 +761,8 @@ function pollCleanupTask(taskId: number) {
   void poll()
 }
 
-function refreshCurrentTab() {
+function handleTabChange() {
+  filters.page = 1
   if (activeTab.value === 'scopes') {
     void loadScopes()
     return
@@ -792,11 +772,6 @@ function refreshCurrentTab() {
     return
   }
   void loadDashboard()
-}
-
-function handleTabChange() {
-  filters.page = 1
-  refreshCurrentTab()
 }
 
 function normalizedEventMessage(row: SystemAlertEvent) {
@@ -868,13 +843,12 @@ onBeforeUnmount(() => {
   <div class="page-card system-alert-page">
     <div class="alert-tab-toolbar">
       <el-tabs v-model="activeTab" class="alert-tabs" @tab-change="handleTabChange">
-        <el-tab-pane label="系统异常" name="systemError" />
+        <el-tab-pane label="最近系统异常事件" name="systemError" />
         <el-tab-pane label="慢 SQL" name="slowSql" />
         <el-tab-pane label="关注业务线" name="scopes" />
         <el-tab-pane label="过滤规则" name="rules" />
       </el-tabs>
       <div class="header-buttons">
-        <el-button @click="refreshCurrentTab">刷新</el-button>
         <el-button v-if="activeTab === 'scopes' && canCreate" type="primary" @click="openCreate">新增关注业务线</el-button>
         <el-button v-if="activeTab === 'rules' && canCreate" type="primary" @click="openCreateRule">新增过滤规则</el-button>
       </div>
@@ -887,7 +861,7 @@ onBeforeUnmount(() => {
       @submit.prevent="searchDashboard"
     >
       <el-form-item label="业务线">
-        <el-select v-model="filters.businessLineCode" placeholder="全部业务线" clearable filterable style="width: 220px">
+        <el-select v-model="filters.businessLineCode" placeholder="全部业务线" clearable filterable>
           <el-option
             v-for="line in businessLineOptions"
             :key="line.id"
@@ -897,12 +871,12 @@ onBeforeUnmount(() => {
         </el-select>
       </el-form-item>
       <el-form-item label="环境">
-        <el-select v-model="filters.environmentCode" clearable placeholder="全部环境" style="width: 140px">
+        <el-select v-model="filters.environmentCode" clearable placeholder="全部环境">
           <el-option v-for="item in environmentOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>
       <el-form-item label="服务">
-        <el-select v-model="filters.serviceName" clearable filterable placeholder="全部服务" style="width: 220px">
+        <el-select v-model="filters.serviceName" clearable filterable placeholder="全部服务">
           <el-option
             v-for="item in serviceOptions"
             :key="item.serviceName"
@@ -912,7 +886,7 @@ onBeforeUnmount(() => {
         </el-select>
       </el-form-item>
       <el-form-item label="级别">
-        <el-select v-model="filters.level" style="width: 120px">
+        <el-select v-model="filters.level">
           <el-option v-for="item in levelOptions" :key="item" :label="item" :value="item" />
         </el-select>
       </el-form-item>
@@ -922,32 +896,38 @@ onBeforeUnmount(() => {
           clearable
           maxlength="200"
           placeholder="输入错误消息关键词"
-          style="width: 260px"
         />
       </el-form-item>
-      <el-form-item label="时间">
+      <el-form-item label="开始时间">
         <el-date-picker
-          v-model="filters.timeRange"
-          type="datetimerange"
+          v-model="filters.startTime"
+          type="datetime"
           value-format="YYYY-MM-DDTHH:mm:ss"
-          :shortcuts="timeRangeShortcuts"
+          :shortcuts="startTimeShortcuts"
           clearable
-          start-placeholder="开始时间"
-          end-placeholder="结束时间"
-          style="width: 360px"
+          placeholder="开始时间"
+        />
+      </el-form-item>
+      <el-form-item label="结束时间">
+        <el-date-picker
+          v-model="filters.endTime"
+          type="datetime"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+          clearable
+          placeholder="结束时间"
         />
       </el-form-item>
       <el-form-item>
         <el-button type="primary" native-type="submit">查询</el-button>
         <el-button
-          v-if="canDelete && (activeTab === 'slowSql' || activeSystemErrorTab === 'events')"
+          v-if="canDelete"
           type="danger"
           @click="submitDeleteTask"
         >
           删除
         </el-button>
         <el-button
-          v-if="canDeleteAndFilter && (activeTab === 'slowSql' || activeSystemErrorTab === 'events')"
+          v-if="canDeleteAndFilter"
           type="warning"
           @click="submitDeleteAndFilterTask"
         >
@@ -958,7 +938,7 @@ onBeforeUnmount(() => {
 
     <el-form v-else-if="activeTab === 'scopes'" inline class="filter-form" @submit.prevent="loadScopes">
       <el-form-item label="业务线">
-        <el-select v-model="filters.businessLineCode" placeholder="全部业务线" clearable filterable style="width: 220px">
+        <el-select v-model="filters.businessLineCode" placeholder="全部业务线" clearable filterable>
           <el-option
             v-for="line in businessLineOptions"
             :key="line.id"
@@ -968,7 +948,7 @@ onBeforeUnmount(() => {
         </el-select>
       </el-form-item>
       <el-form-item label="环境">
-        <el-select v-model="filters.environmentCode" clearable placeholder="全部环境" style="width: 140px">
+        <el-select v-model="filters.environmentCode" clearable placeholder="全部环境">
           <el-option v-for="item in environmentOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>
@@ -979,7 +959,7 @@ onBeforeUnmount(() => {
 
     <el-form v-else inline class="filter-form" @submit.prevent="loadRules">
       <el-form-item label="关键词">
-        <el-input v-model="ruleFilters.keyword" clearable placeholder="规则名称、关键词或备注" style="width: 280px" />
+        <el-input v-model="ruleFilters.keyword" clearable placeholder="规则名称、关键词或备注" />
       </el-form-item>
       <el-form-item>
         <el-checkbox v-model="ruleFilters.enabledOnly">仅看启用</el-checkbox>
@@ -990,31 +970,7 @@ onBeforeUnmount(() => {
     </el-form>
 
     <template v-if="activeTab === 'systemError' || activeTab === 'slowSql'">
-    <el-tabs v-if="activeTab === 'systemError'" v-model="activeSystemErrorTab" class="event-detail-tabs">
-      <el-tab-pane label="最近系统异常事件" name="events" />
-      <el-tab-pane label="系统异常汇总" name="summary" />
-    </el-tabs>
-
-    <template v-if="activeTab === 'slowSql' || activeSystemErrorTab === 'summary'">
-    <div v-if="activeTab === 'slowSql'" class="section-title">{{ eventSummaryLabel }}</div>
-    <el-table v-loading="loading" :data="dashboard.summaries" class="summary-table">
-      <el-table-column prop="businessLineCode" label="业务线" width="140" />
-      <el-table-column prop="environmentCode" label="环境" width="90" />
-      <el-table-column prop="subsystemName" label="子系统" min-width="150" show-overflow-tooltip />
-      <el-table-column prop="serviceName" label="服务名" min-width="160" show-overflow-tooltip />
-      <el-table-column :label="eventCountLabel" width="110">
-        <template #default="{ row }">
-          <el-tag :type="row.errorCount > 0 ? 'danger' : 'success'">{{ row.errorCount }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="最近发生时间" width="180">
-        <template #default="{ row }">{{ readableTime(row.latestOccurredAt) }}</template>
-      </el-table-column>
-    </el-table>
-    </template>
-
-    <template v-if="activeTab === 'slowSql' || activeSystemErrorTab === 'events'">
-    <div v-if="activeTab === 'slowSql'" class="section-title">最近{{ eventMetricLabel }}</div>
+    <div v-if="activeTab === 'slowSql'" class="section-title">最近慢 SQL 事件</div>
     <el-table v-loading="loading" :data="dashboard.events" row-key="id">
       <el-table-column prop="occurredAt" label="发生时间" width="180">
         <template #default="{ row }">{{ readableTime(row.occurredAt) }}</template>
@@ -1024,7 +980,6 @@ onBeforeUnmount(() => {
           <el-tag :type="levelTag(row.level)">{{ row.level }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="subsystemName" label="子系统" width="140" show-overflow-tooltip />
       <el-table-column prop="serviceName" label="服务名" width="160" show-overflow-tooltip />
       <el-table-column label="错误消息" min-width="480">
         <template #default="{ row }">
@@ -1073,7 +1028,6 @@ onBeforeUnmount(() => {
         @size-change="handlePageSizeChange"
       />
     </div>
-    </template>
     </template>
 
     <template v-else-if="activeTab === 'scopes'">
@@ -1310,6 +1264,34 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.filter-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px 18px;
+  align-items: center;
+}
+
+.filter-form :deep(.el-form-item) {
+  margin: 0;
+}
+
+.filter-form :deep(.el-form-item__label) {
+  flex: none;
+  justify-content: flex-end;
+  width: 68px;
+}
+
+.filter-form :deep(.el-form-item__content) {
+  flex: 1;
+  min-width: 0;
+}
+
+.filter-form :deep(.el-input),
+.filter-form :deep(.el-select),
+.filter-form :deep(.el-date-editor) {
+  width: 100%;
+}
+
 .alert-tab-toolbar {
   display: flex;
   align-items: flex-start;
@@ -1397,14 +1379,6 @@ onBeforeUnmount(() => {
   color: #0f172a;
   font-size: 16px;
   font-weight: 700;
-}
-
-.summary-table {
-  margin-top: -4px;
-}
-
-.event-detail-tabs {
-  margin-bottom: -6px;
 }
 
 @media (max-width: 900px) {

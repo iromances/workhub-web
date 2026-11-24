@@ -27,6 +27,7 @@ const statusThemes: Record<string, ReportDemandStatusTheme> = {
   待排期: { color: '#0f4db8', background: '#e8f0ff', border: '#bed2ff' },
   待设计: { color: '#5e3ab3', background: '#f1eafe', border: '#d7c6fb' },
   开发中: { color: '#0f4db8', background: '#e8f0ff', border: '#bed2ff' },
+  开发完成: { color: '#0f4db8', background: '#e8f0ff', border: '#bed2ff' },
   测试中: { color: '#0f766e', background: '#ddf9f2', border: '#ace9db' },
   待验收: { color: '#b45309', background: '#fff1e4', border: '#f5cda5' },
   待上线: { color: '#a61b58', background: '#fde7f1', border: '#f3bfd4' },

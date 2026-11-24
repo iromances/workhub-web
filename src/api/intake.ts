@@ -1,3 +1,4 @@
+import type { TestDeploymentRequest } from '@/types/test-deployment'
 import type { ApiResponse, PageResponse } from '@/types/http'
 import type { DemandTypeFilter, DevelopmentAnalysisResponse, IntakeAiDevelopment, IntakeBoard, IntakeBoardGroupBy, IntakeBusinessLineUpdateRequest, IntakeClarificationAnalysisResponse, IntakeDashboard, IntakeDetail, IntakeRequirementFolder, IntakeStageActionRequest, IntakeSubmitTestReview, IntakeSummary, IntakeTodo, IntakeTodoCreateRequest, IntakeTodoStatusRequest, IntakeTodoUpdateRequest } from '@/types/work-item'
 
@@ -85,6 +86,11 @@ export async function openIntakeRequirementFolder(id: number): Promise<IntakeReq
 
 export async function openIntakeDevelopmentPlanFolder(id: number): Promise<IntakeRequirementFolder> {
   const response = await http.post<ApiResponse<IntakeRequirementFolder>>(`/intake/${id}/development-plan-folder/open`)
+  return response.data.data
+}
+
+export async function updateIntakeAiAgent(id: number, agentId: string | null): Promise<IntakeDetail> {
+  const response = await http.post<ApiResponse<IntakeDetail>>(`/intake/${id}/ai-agent`, { agentId })
   return response.data.data
 }
 
@@ -320,7 +326,7 @@ export async function startSubmitTestReview(id: number): Promise<IntakeSubmitTes
 
 export async function confirmSubmitTest(
   id: number,
-  request: { testOwnerUserName: string; environmentCode?: string; forceConfirm: boolean; skipAiReview?: boolean; triggerJenkins?: boolean; actualEffort?: string; actualCompletedTime?: string; occurredAt?: string; jenkinsJobName?: string },
+  request: { testOwnerUserName: string; environmentCode?: string; forceConfirm: boolean; skipAiReview?: boolean; createZentaoTestTask?: boolean; triggerJenkins?: boolean; actualEffort?: string; actualCompletedTime?: string; occurredAt?: string; jenkinsJobName?: string; testDeployment?: TestDeploymentRequest },
 ): Promise<IntakeSubmitTestReview> {
   const response = await http.post<ApiResponse<IntakeSubmitTestReview>>(`/intake/${id}/submit-test-review/confirm`, request)
   return response.data.data

@@ -420,6 +420,7 @@ export interface DevelopmentAnalysisResponse {
   intakeId: number
   status: string
   message: string | null
+  errorStack?: string | null
   retryable: boolean
   startedAt: string | null
   finishedAt: string | null
@@ -522,6 +523,7 @@ export interface IntakeDetail {
   developmentOwnerUserName: string | null
   developmentStandard: string | null
   receivedAt: string
+  aiAgentId?: string | null
   demandStatus: string
   pausePreviousDemandStatus: string | null
   pauseReason: string | null

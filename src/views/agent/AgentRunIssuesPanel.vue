@@ -5,16 +5,16 @@ import { fetchAgentIssues, fixAgentIssues } from '@/api/agent'
 import type { AgentIssue, AgentIssueDomain, AgentRunDetail } from '@/types/agent'
 import { issueDomainLabels, issueStatusLabels, localTime } from './agentPresentation'
 
-const props = defineProps<{ detail: AgentRunDetail }>()
+const props = withDefaults(defineProps<{ detail: AgentRunDetail; grouped?: boolean }>(), { grouped: true })
 const emit = defineEmits<{ refresh: [] }>()
 const issues = ref<AgentIssue[]>([])
 const loading = ref(false)
 const selected = ref<string[]>([])
 const fixing = ref(false)
-const domains: AgentIssueDomain[] = ['SYSTEM_ALERT', 'BUSINESS_MONITOR', 'ACCOUNTING']
+const domains = computed(() => props.grouped ? ['SYSTEM_ALERT', 'BUSINESS_MONITOR', 'ACCOUNTING'] as const : ['ALL'] as const)
 
 const byDomain = computed(() => {
-  const map: Record<AgentIssueDomain, AgentIssue[]> = { SYSTEM_ALERT: [], BUSINESS_MONITOR: [], ACCOUNTING: [] }
+  const map: Record<AgentIssueDomain | 'ALL', AgentIssue[]> = { SYSTEM_ALERT: [], BUSINESS_MONITOR: [], ACCOUNTING: [], ALL: issues.value }
   for (const issue of issues.value) map[issue.domain]?.push(issue)
   return map
 })
@@ -61,9 +61,9 @@ async function copyFixPrompt() {
 <template>
   <!-- 挂在运行详情「结果与产物」内层 el-tabs 里：本组件只提供三个问题域 tab-pane 与工具条 -->
   <el-tab-pane v-for="domain in domains" :key="domain" :name="domain">
-    <template #label>{{ issueDomainLabels[domain] }}（{{ byDomain[domain].length }}）</template>
+    <template #label>{{ domain === 'ALL' ? 'AI 分析工单' : issueDomainLabels[domain] }}（{{ byDomain[domain].length }}）</template>
     <div v-loading="loading">
-      <el-empty v-if="!byDomain[domain].length" description="本轮无问题" :image-size="48" />
+      <el-empty v-if="!byDomain[domain].length" description="本轮暂无分析工单，业务核验以正式规则结果为准" :image-size="48" />
       <div v-for="issue in byDomain[domain]" :key="issue.id" class="issue-card">
         <div class="issue-head">
           <el-checkbox :model-value="selected.includes(issue.id)"

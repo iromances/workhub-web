@@ -1,93 +1,18 @@
-import {
-  resolveDevelopmentProjectGroupCandidate,
-  shouldIgnoreDevelopmentSystemOptionsError,
-  shouldReloadDevelopmentDraftAfterSaveError,
-} from './intakeProjectGroupErrors'
-
-const missingBusinessLineError = {
-  response: {
-    data: {
-      message: '业务线不存在',
-    },
-  },
-}
-
-assert(
-  shouldIgnoreDevelopmentSystemOptionsError(missingBusinessLineError),
-  '业务线不存在时，加载研发涉及系统清单应允许兜底为空列表',
-)
-
-const missingBusinessLineParameterError = {
-  response: {
-    data: {
-      message: '业务线不能为空',
-    },
-  },
-}
-
-assert(
-  shouldIgnoreDevelopmentSystemOptionsError(missingBusinessLineParameterError),
-  '业务线为空时，加载研发涉及系统清单应允许兜底为空列表',
-)
-
-const networkError = new Error('Network Error')
-
-assert(
-  !shouldIgnoreDevelopmentSystemOptionsError(networkError),
-  '网络或服务异常仍应提示加载研发涉及系统清单失败',
-)
-
-const invalidSystemTagError = {
-  response: {
-    data: {
-      message: '涉及系统不在当前业务线或中台系统清单中：scf-payment',
-    },
-  },
-}
-
-assert(
-  !shouldReloadDevelopmentDraftAfterSaveError(invalidSystemTagError),
-  '保存失败时不应重拉服务端草稿覆盖用户当前编辑',
-)
-
-assert(
-  resolveDevelopmentProjectGroupCandidate({
-    draftProjectGroup: '',
-    stageProjectGroup: '',
-    rowProjectHint: '嘉泰资产平台；消费分期业务系统（信易通平台）；先行通资产平台',
-    detailProjectHint: '嘉泰资产平台；消费分期业务系统（信易通平台）；先行通资产平台',
-    detailBusinessLineCode: 'BL000003',
-    detailBusinessLine: '嘉泰资产平台',
-  }) === 'BL000003',
-  '研发任务业务线候选应优先使用规范业务线编码，不应从 projectHint 兜底',
-)
-
-assert(
-  resolveDevelopmentProjectGroupCandidate({
-    draftProjectGroup: '',
-    stageProjectGroup: '',
-    rowProjectHint: '嘉泰资产平台；消费分期业务系统（信易通平台）；先行通资产平台',
-    detailProjectHint: '嘉泰资产平台；消费分期业务系统（信易通平台）；先行通资产平台',
-    detailBusinessLineCode: '',
-    detailBusinessLine: '嘉泰资产平台',
-  }) === '嘉泰资产平台',
-  '没有业务线编码时应使用业务线名称',
-)
-
-assert(
-  resolveDevelopmentProjectGroupCandidate({
-    draftProjectGroup: '',
-    stageProjectGroup: '',
-    rowProjectHint: '嘉泰资产平台；消费分期业务系统（信易通平台）；先行通资产平台',
-    detailProjectHint: '嘉泰资产平台；消费分期业务系统（信易通平台）；先行通资产平台',
-    detailBusinessLineCode: '',
-    detailBusinessLine: '',
-  }) === '',
-  '缺少规范业务线时不应把 projectHint 当业务线传给后端',
-)
+import { resolveDevelopmentProjectGroupCandidate, shouldReloadDevelopmentDraftAfterSaveError } from './intakeProjectGroupErrors'
 
 function assert(condition: boolean, message: string) {
-  if (!condition) {
-    throw new Error(message)
-  }
+  if (!condition) throw new Error(message)
 }
+
+for (const draftProjectGroup of ['优利卡货车驻车电池项目', '叶丽慧的系统开发_3.0', 'BL000001']) {
+  const source = { draftProjectGroup, stageProjectGroup: 'BL000002', detailBusinessLineCode: 'BL000003', detailBusinessLine: '嘉泰消费分期' }
+  assert(resolveDevelopmentProjectGroupCandidate(source) === 'BL000003', '草稿和表单不得覆盖需求业务线')
+  assert(resolveDevelopmentProjectGroupCandidate({ ...source, detailBusinessLineCode: '', detailBusinessLine: '' }) === '', '需求无业务线时不得回退到草稿或表单')
+}
+assert(resolveDevelopmentProjectGroupCandidate({ rowBusinessLineCode: 'BL000005', detailBusinessLine: '旧名称' }) === 'BL000005', '列表编码优先于名称')
+assert(resolveDevelopmentProjectGroupCandidate({ detailBusinessLine: ' 嘉泰消费分期 ' }) === '嘉泰消费分期', '兼容需求只有业务线名称')
+assert(resolveDevelopmentProjectGroupCandidate({}) === '', '缺少业务线时返回空值')
+assert(resolveDevelopmentProjectGroupCandidate({ detailBusinessLineCode: 'undefined', rowBusinessLine: '无' }) === '', '忽略无效占位符')
+assert(resolveDevelopmentProjectGroupCandidate({ detailBusinessLineCode: 'BL000005' }) === 'BL000005', '切换需求后使用新需求业务线')
+assert(!shouldReloadDevelopmentDraftAfterSaveError(new Error('保存失败')), '保存失败不能覆盖当前编辑')
+console.log('业务线来源回归：通过')

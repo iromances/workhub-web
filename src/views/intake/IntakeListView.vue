@@ -1,13 +1,18 @@
 <script setup lang="ts">
+import IntakeTestDeploymentPanel from './IntakeTestDeploymentPanel.vue'
+import type { TestDeploymentRequest } from '@/types/test-deployment'
+
 import { CircleCheckFilled, CircleCloseFilled, Clock, DocumentCopy, EditPen, Loading, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { fetchAgents } from '@/api/agent'
 import {
   appendIntakeAttachments,
   advanceIntakeStage,
   rollbackIntakeStage,
+  updateIntakeAiAgent,
   confirmSubmitTest,
   createIntakeTodo,
   createUploadIntake,
@@ -53,7 +58,6 @@ import type { DevelopmentAnalysisResponse, DevelopmentWorkItemDraft, IntakeAiDev
 import { buildAcceptanceDateDisplay, buildReleaseDateDisplay, buildTestingDateDisplay } from './intakeDateColumns'
 import {
   resolveDevelopmentProjectGroupCandidate,
-  shouldIgnoreDevelopmentSystemOptionsError,
   shouldReloadDevelopmentDraftAfterSaveError,
 } from './intakeProjectGroupErrors'
 import {
@@ -126,6 +130,7 @@ const priorityTarget = ref<IntakeSummary | null>(null)
 const requirementTypeDialogVisible = ref(false)
 const requirementTypeSubmitting = ref(false)
 const aiDevelopment = ref<IntakeAiDevelopment | null>(null)
+const retryingAiDevelopment = ref(false)
 const submitTestReview = ref<IntakeSubmitTestReview | null>(null)
 const submitTestReviewStarting = ref(false)
 const submitTestEnvironmentCode = ref('')
@@ -134,7 +139,19 @@ const submitTestReviewTimer = ref<number | null>(null)
 const submitTestJobName = ref('')
 const submitTestOwnerUserName = ref('')
 const submitTestAiReviewEnabled = ref(false)
+const submitTestZentaoEnabled = ref(true)
 const submitTestJenkinsEnabled = ref(false)
+const testDeploymentRequest = ref<TestDeploymentRequest | null>(null)
+function selectTestDeployment(request: TestDeploymentRequest | null, environmentCode?: string | null) {
+  if (!testDeploymentRequest.value && request) submitTestJenkinsEnabled.value = true
+  testDeploymentRequest.value = request
+  if (environmentCode) submitTestEnvironmentCode.value = environmentCode.toUpperCase()
+}
+/** 提测环境切换后清空发布选择并关闭构建开关，发布面板按新环境重新过滤选择。 */
+function handleSubmitTestEnvironmentChange() {
+  testDeploymentRequest.value = null
+  submitTestJenkinsEnabled.value = false
+}
 const sqlDraftSubmitting = ref(false)
 const todoFormVisible = ref(false)
 const todoFormSubmitting = ref(false)
@@ -182,7 +199,14 @@ const createForm = reactive({
   sourceChannel: '',
   rawContent: '',
   projectGroup: '',
+  aiAgentId: '',
 })
+
+const createAgentOptions = ref<Array<{ id: string; name: string }>>([])
+const aiAgentDialogVisible = ref(false)
+const aiAgentDialogRow = ref<{ id: number; aiAgentId?: string | null } | null>(null)
+const aiAgentFormAgentId = ref('')
+const aiAgentSaving = ref(false)
 
 const zentaoForm = reactive({
   url: '',
@@ -311,18 +335,14 @@ function canEditDevelopmentDraft() {
   )
 }
 
-function resolveDevelopmentProjectGroup(draftProjectGroup?: string | null) {
+function resolveDevelopmentProjectGroup() {
   const row = currentDevelopmentContextRow()
   const detail = currentDevelopmentContextDetail()
   return resolveDevelopmentProjectGroupCandidate({
-    draftProjectGroup,
-    stageProjectGroup: stageActionForm.projectGroup,
     rowBusinessLineCode: row?.businessLineCode,
     rowBusinessLine: row?.businessLine,
-    rowProjectHint: row?.projectHint,
     detailBusinessLineCode: detail?.structuredData?.businessLineCode,
     detailBusinessLine: detail?.structuredData?.businessLine,
-    detailProjectHint: detail?.structuredData?.projectHint,
   })
 }
 
@@ -437,7 +457,7 @@ async function submitBusinessLine() {
     syncDevelopmentForms(detail)
     stageActionForm.projectGroup = detail.structuredData?.businessLineCode || detail.structuredData?.businessLine || ''
     if (isDevelopmentRequirement(detail) && stageActionForm.projectGroup) {
-      await loadDevelopmentTaskOptions(stageActionForm.projectGroup)
+      await loadDevelopmentTaskOptions()
     }
     businessLineDialogVisible.value = false
     ElMessage.success('业务线已保存')
@@ -759,15 +779,9 @@ async function openDetail(id: number) {
     await loadClarificationAnalysis(id, { expectedDetailId: id, clearBeforeLoad: true })
   }
   const analysis = await loadDevelopmentAnalysis(id, { expectedDetailId: id, clearBeforeLoad: true })
-  if (analysis?.draft?.projectGroup) {
-    stageActionForm.projectGroup = resolveDevelopmentProjectGroup(analysis.draft.projectGroup)
-  }
   if (!analysis && isDevelopmentRequirement(detail) && detail.demandStatus === '待评估') {
     ensureManualDevelopmentDraft()
-    if (developmentAnalysis.value?.draft?.projectGroup) {
-      stageActionForm.projectGroup = resolveDevelopmentProjectGroup(developmentAnalysis.value.draft.projectGroup)
-    }
-    await loadDevelopmentTaskOptions(stageActionForm.projectGroup)
+    await loadDevelopmentTaskOptions()
   }
 }
 
@@ -831,13 +845,7 @@ async function loadDevelopmentAnalysis(id: number, options: { expectedDetailId?:
     }
     developmentAnalysis.value = normalizeDevelopmentAnalysisEffort(analysis)
     loadDevelopmentHistory(id)
-    const projectGroup = resolveDevelopmentProjectGroup(developmentAnalysis.value?.draft?.projectGroup)
-    if (projectGroup) {
-      stageActionForm.projectGroup = projectGroup
-      await loadDevelopmentTaskOptions(projectGroup)
-    } else {
-      await loadDevelopmentDeveloperOptions()
-    }
+    await loadDevelopmentTaskOptions()
     return analysis
   } catch (error) {
     if (requestToken === developmentAnalysisRequestToken) {
@@ -874,8 +882,8 @@ async function loadClarificationAnalysis(id: number, options: { expectedDetailId
   }
 }
 
-async function loadDevelopmentSystemOptions(projectGroup: string) {
-  const normalizedProjectGroup = projectGroup.trim()
+async function loadDevelopmentSystemOptions() {
+  const normalizedProjectGroup = resolveDevelopmentProjectGroup()
   if (!normalizedProjectGroup) {
     developmentSystemOptions.value = []
     return
@@ -884,9 +892,7 @@ async function loadDevelopmentSystemOptions(projectGroup: string) {
     developmentSystemOptions.value = await fetchSelectableProjectInvolvedSystems(normalizedProjectGroup)
   } catch (error) {
     developmentSystemOptions.value = []
-    if (!shouldIgnoreDevelopmentSystemOptionsError(error)) {
-      ElMessage.error('加载涉及系统清单失败')
-    }
+    ElMessage.error(resolveErrorMessage(error, '加载涉及系统清单失败'))
     console.error(error)
   }
 }
@@ -901,9 +907,10 @@ async function loadDevelopmentDeveloperOptions() {
   }
 }
 
-async function loadDevelopmentTaskOptions(projectGroup: string) {
+async function loadDevelopmentTaskOptions() {
+  stageActionForm.projectGroup = resolveDevelopmentProjectGroup()
   await Promise.all([
-    loadDevelopmentSystemOptions(projectGroup),
+    loadDevelopmentSystemOptions(),
     loadDevelopmentDeveloperOptions(),
   ])
 }
@@ -947,9 +954,53 @@ function openCreateDialog() {
   createForm.sourceChannel = '需求录入'
   createForm.rawContent = ''
   createForm.projectGroup = ''
+  createForm.aiAgentId = ''
+  loadCreateAgentOptions()
   screenshotFiles.value = []
   attachmentFiles.value = []
   createDialogVisible.value = true
+}
+
+/** 录入弹窗的数字员工下拉：只列启用的 Agent，加载失败静默隐藏选项（回退系统默认）。 */
+async function loadCreateAgentOptions() {
+  if (createAgentOptions.value.length > 0) {
+    return
+  }
+  try {
+    const page = await fetchAgents(1)
+    createAgentOptions.value = (page.items || []).filter((agent) => agent.enabled !== false).map((agent) => ({ id: agent.id, name: agent.configuration?.name || agent.id }))
+  } catch (error) {
+    console.warn('加载数字员工列表失败，录入时可选数字员工暂不可用', error)
+  }
+}
+
+function openAiAgentDialog(row: { id: number; aiAgentId?: string | null }) {
+  aiAgentDialogRow.value = row
+  aiAgentFormAgentId.value = row.aiAgentId || ''
+  aiAgentDialogVisible.value = true
+  loadCreateAgentOptions()
+}
+
+async function submitAiAgentUpdate() {
+  const row = aiAgentDialogRow.value
+  if (!row || aiAgentSaving.value) {
+    return
+  }
+  aiAgentSaving.value = true
+  try {
+    await updateIntakeAiAgent(row.id, aiAgentFormAgentId.value || null)
+    ElMessage.success(aiAgentFormAgentId.value ? '已设置开发数字员工' : '已清除开发数字员工')
+    aiAgentDialogVisible.value = false
+    if (selectedDetail.value?.id === row.id) {
+      await refreshSelectedDetail(row.id)
+    }
+    await loadIntakeRecords()
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error, '设置开发数字员工失败'))
+    console.error(error)
+  } finally {
+    aiAgentSaving.value = false
+  }
 }
 
 function isBlankBusinessValue(value: string | null | undefined) {
@@ -1119,6 +1170,9 @@ async function submitCreate() {
     if (createForm.developmentStandard) {
       formData.append('developmentStandard', createForm.developmentStandard)
     }
+    if (createForm.aiAgentId) {
+      formData.append('aiAgentId', createForm.aiAgentId)
+    }
     formData.append('sourceChannel', createForm.sourceChannel)
     if (createForm.rawContent) {
       formData.append('rawContent', createForm.rawContent)
@@ -1150,16 +1204,26 @@ async function loadAiDevelopmentFor(id: number) {
 }
 
 async function retryAiDevelopmentAction() {
-  if (!aiDevelopment.value) {
+  if (!aiDevelopment.value || retryingAiDevelopment.value) {
     return
   }
   const intakeId = aiDevelopment.value.intakeId
+  retryingAiDevelopment.value = true
   try {
-    aiDevelopment.value = await retryIntakeAiDevelopment(intakeId)
-    ElMessage.success('AI 开发重试已发起')
+    const result = await retryIntakeAiDevelopment(intakeId)
+    if (aiDevelopment.value?.intakeId === intakeId) {
+      aiDevelopment.value = result
+    }
+    if (result.executionStatus === 'FAILED') {
+      ElMessage.error(result.executionMessage || '重试 AI 开发失败')
+    } else {
+      ElMessage.success('AI 开发重试已发起')
+    }
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, '重试 AI 开发失败'))
     console.error(error)
+  } finally {
+    retryingAiDevelopment.value = false
   }
 }
 
@@ -1178,10 +1242,11 @@ function submitTestEnvironmentOptions() {
   const code = selectedDetail.value?.structuredData?.businessLineCode
     || (stageActionRow.value as unknown as { businessLineCode?: string | null } | null)?.businessLineCode
   if (!code) {
-    return []
+    return ['TEST']
   }
   const group = projectGroups.value.find(item => item.businessLineCode === code)
-  return (group?.supportedEnvironments ?? []).filter(env => env !== 'PROD')
+  const environments = (group?.supportedEnvironments ?? []).filter(env => env !== 'PROD')
+  return environments.length ? environments : ['TEST']
 }
 
 /** 默认 Job 名：环境小写前缀 + 首个任务系统（Jenkins Job 按 {env}-{system} 命名）。 */
@@ -1584,11 +1649,11 @@ async function openStageActionDialog(row: IntakeSummary) {
       const analysis = await loadDevelopmentAnalysis(row.id, { clearBeforeLoad: true })
       if (analysis?.draft) {
         const draft = analysis.draft
-        stageActionForm.projectGroup = resolveDevelopmentProjectGroup(draft.projectGroup)
+        stageActionForm.projectGroup = resolveDevelopmentProjectGroup()
         stageActionForm.plannedDueDate = normalizePickerDateValue(draft.plannedDueDate || row.plannedDueDate)
       }
       ensureManualDevelopmentDraft()
-      await loadDevelopmentTaskOptions(stageActionForm.projectGroup)
+      await loadDevelopmentTaskOptions()
       return
     }
   }
@@ -1600,7 +1665,9 @@ async function openStageActionDialog(row: IntakeSummary) {
     submitTestReview.value = null
     submitTestForceConfirm.value = false
     submitTestAiReviewEnabled.value = false
+    submitTestZentaoEnabled.value = true
     submitTestJenkinsEnabled.value = false
+    testDeploymentRequest.value = null
     submitTestJobName.value = defaultSubmitTestJobName()
     submitTestOwnerUserName.value = ''
     const environments = submitTestEnvironmentOptions()
@@ -1632,16 +1699,12 @@ async function openStageActionDialog(row: IntakeSummary) {
   stageActionVisible.value = true
 }
 
-async function handleTaskEvaluationProjectGroupChange() {
-  stageActionForm.plannedDueDate = normalizePickerDateValue(stageActionRow.value?.plannedDueDate)
-  ensureManualDevelopmentDraft()
-  if (developmentAnalysis.value?.draft) {
-    developmentAnalysis.value.draft.projectGroup = stageActionForm.projectGroup
-    developmentAnalysis.value.draft.projectId = null
-    developmentAnalysis.value.draft.projectName = null
-    developmentAnalysis.value.draft.repositoryUrl = null
-  }
-  await loadDevelopmentTaskOptions(stageActionForm.projectGroup)
+/** 提测完成提示：按「是否提禅道测试单 × 是否触发 Jenkins 构建」组合文案。 */
+function submitTestResultMessage() {
+  const parts: string[] = []
+  if (submitTestZentaoEnabled.value) parts.push('禅道测试单已创建')
+  if (submitTestJenkinsEnabled.value) parts.push('测试发布已登记，可在需求详情跟踪构建结果')
+  return parts.length ? `提测完成：${parts.join('，')}` : '提测完成'
 }
 
 async function submitStageAction() {
@@ -1725,26 +1788,29 @@ async function submitStageAction() {
         ElMessage.warning('请选择测试负责人')
         return
       }
-      if (submitTestJenkinsEnabled.value && !submitTestEnvironmentCode.value) {
+      if (!submitTestEnvironmentCode.value) {
         ElMessage.warning('请选择测试环境')
+        return
+      }
+      if (submitTestJenkinsEnabled.value && !testDeploymentRequest.value) {
+        ElMessage.warning('当前环境未登记测试发布目标，请切换环境或关闭 Jenkins 构建')
         return
       }
       await confirmSubmitTest(stageActionRow.value.id, {
         testOwnerUserName: submitTestOwnerUserName.value.trim(),
-        environmentCode: submitTestJenkinsEnabled.value ? submitTestEnvironmentCode.value : undefined,
+        environmentCode: submitTestEnvironmentCode.value,
         forceConfirm: submitTestForceConfirm.value,
         skipAiReview: !submitTestAiReviewEnabled.value,
+        createZentaoTestTask: submitTestZentaoEnabled.value,
         triggerJenkins: submitTestJenkinsEnabled.value,
         actualEffort: actualEffort || undefined,
         actualCompletedTime: stageActionForm.actualCompletedTime || undefined,
         occurredAt: stageActionForm.occurredAt || undefined,
-        jenkinsJobName: submitTestJenkinsEnabled.value ? (submitTestJobName.value.trim() || undefined) : undefined,
+        testDeployment: submitTestJenkinsEnabled.value ? (testDeploymentRequest.value ?? undefined) : undefined,
       })
       stopSubmitTestPolling()
       stageActionVisible.value = false
-      ElMessage.success(submitTestJenkinsEnabled.value
-        ? '提测完成：禅道测试单已创建，Jenkins 测试环境构建已触发'
-        : '提测完成：禅道测试单已创建')
+      ElMessage.success(submitTestResultMessage())
       await loadIntakeRecords()
       if (selectedDetail.value?.id === stageActionRow.value.id) {
         try {
@@ -2412,10 +2478,10 @@ async function persistDevelopmentDraft(intakeId: number, showSuccess = true) {
     await loadDevelopmentAnalysis(intakeId, selectedDetail.value?.id === intakeId ? { expectedDetailId: intakeId, clearBeforeLoad: true } : { clearBeforeLoad: true })
     return false
   }
-  const projectGroup = cleanBusinessValue(stageActionForm.projectGroup || developmentAnalysis.value.draft.projectGroup)
+  const projectGroup = resolveDevelopmentProjectGroup()
   const workItems = buildDevelopmentDraftItems()
-  if (workItems.length > 0 && !projectGroup) {
-    ElMessage.warning('请先选择业务线')
+  if (!projectGroup) {
+    ElMessage.warning('请先完善需求本身的业务线')
     return false
   }
   if (!validateDevelopmentDraftItems(workItems)) {
@@ -3428,6 +3494,7 @@ onMounted(loadBaseData)
           <el-option label="待排期" value="待排期" />
           <el-option label="待设计" value="待设计" />
           <el-option label="开发中" value="开发中" />
+          <el-option label="开发完成" value="开发完成" />
           <el-option label="测试中" value="测试中" />
           <el-option label="待验收" value="待验收" />
           <el-option label="待上线" value="待上线" />
@@ -3630,6 +3697,9 @@ onMounted(loadBaseData)
                 >
                   回退上一阶段
                 </el-dropdown-item>
+                <el-dropdown-item @click="openAiAgentDialog(row)">
+                  开发数字员工
+                </el-dropdown-item>
                 <el-dropdown-item
                   v-if="canPauseDemand(row)"
                   @click="openPauseDemandDialog(row)"
@@ -3745,6 +3815,11 @@ onMounted(loadBaseData)
           <el-option label="常规（沿用现有 AI 研发任务）" value="STANDARD" />
         </el-select>
       </el-form-item>
+      <el-form-item label="开发数字员工">
+        <el-select v-model="createForm.aiAgentId" clearable filterable placeholder="设计完成后由该数字员工执行 AI 开发；不选则用系统默认" style="width: 100%">
+          <el-option v-for="agent in createAgentOptions" :key="agent.id" :label="agent.name" :value="agent.id" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="需求录入">
         <el-input
           v-model="createForm.rawContent"
@@ -3810,26 +3885,9 @@ onMounted(loadBaseData)
             <div class="task-evaluation-toolbar-main">
               <div class="task-evaluation-toolbar">
                 <span class="task-evaluation-toolbar-label">所属业务线</span>
-                <el-select
-                  v-model="stageActionForm.projectGroup"
-                  class="task-project-group-select"
-                  filterable
-                  clearable
-                  placeholder="请选择业务线"
-                  @change="handleTaskEvaluationProjectGroupChange"
-                >
-                  <el-option
-                    v-for="item in projectGroups"
-                    :key="item.id"
-                    :label="formatProjectGroupOption(item)"
-                    :value="item.businessLineCode"
-                  >
-                    <div class="project-group-option">
-                      <span class="project-group-option-name">{{ item.groupName }}</span>
-                      <span class="project-group-option-meta">{{ item.gitlabGroupName || '未配置 GitLab 组' }}</span>
-                    </div>
-                  </el-option>
-                </el-select>
+                <span class="task-project-group-select">
+                  {{ projectGroups.find((item) => item.businessLineCode === stageActionForm.projectGroup)?.groupName || stageActionForm.projectGroup || '请先完善需求本身的业务线' }}
+                </span>
               </div>
             </div>
           </div>
@@ -3928,7 +3986,7 @@ onMounted(loadBaseData)
                           collapse-tags
                           collapse-tags-tooltip
                           placeholder="选择涉及系统"
-                          :no-data-text="stageActionForm.projectGroup ? '当前业务线暂无可选系统' : '请先选择业务线'"
+                          :no-data-text="stageActionForm.projectGroup ? '当前业务线暂无可选系统' : '请先完善需求本身的业务线'"
                           style="width: 100%"
                         >
                           <el-option
@@ -4118,28 +4176,54 @@ onMounted(loadBaseData)
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="测试环境" required>
+          <el-select
+            v-model="submitTestEnvironmentCode"
+            placeholder="请选择测试环境"
+            style="width: 100%"
+            @change="handleSubmitTestEnvironmentChange"
+          >
+            <el-option
+              v-for="env in submitTestEnvironmentOptions()"
+              :key="env"
+              :label="env"
+              :value="env"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="禅道测试单">
+          <div class="ai-clarification-option">
+            <el-switch
+              v-model="submitTestZentaoEnabled"
+              active-text="提单"
+              inactive-text="不提单"
+            />
+            <span class="ai-clarification-option__hint">
+              {{ submitTestZentaoEnabled ? '确认提测时向禅道创建测试单，负责人为所选测试负责人。' : '确认提测时不创建禅道测试单，仅推进测试中。' }}
+            </span>
+          </div>
+        </el-form-item>
         <el-form-item label="触发 Jenkins 构建">
           <div class="ai-clarification-option">
             <el-switch
               v-model="submitTestJenkinsEnabled"
+              :disabled="!testDeploymentRequest"
               active-text="构建"
               inactive-text="不构建"
             />
             <span class="ai-clarification-option__hint">
-              {{ submitTestJenkinsEnabled ? '确认提测时触发所选测试环境的 Jenkins 构建并推进测试中。' : '仅创建禅道测试单并推进测试中。' }}
+              {{ !testDeploymentRequest
+                ? '当前环境未登记测试发布目标，不能触发构建。'
+                : (submitTestJenkinsEnabled
+                  ? '确认提测时触发所选测试环境的 Jenkins 构建并推进测试中。'
+                  : (submitTestZentaoEnabled ? '仅创建禅道测试单并推进测试中。' : '仅推进测试中。')) }}
             </span>
           </div>
         </el-form-item>
-        <template v-if="submitTestJenkinsEnabled">
-          <el-form-item label="测试环境" required class="submit-test-environment-field">
-            <el-select v-model="submitTestEnvironmentCode" placeholder="选择本次发布的测试环境" style="width: 100%">
-              <el-option v-for="env in submitTestEnvironmentOptions()" :key="env" :label="env" :value="env" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="Jenkins Job" class="submit-test-environment-field">
-            <el-input v-model="submitTestJobName" placeholder="留空则按环境前缀+任务系统自动拼接" clearable />
-          </el-form-item>
-        </template>
+        <IntakeTestDeploymentPanel v-if="stageActionRow" :key="stageActionRow.id"
+          :intake-id="stageActionRow.id" :environment-code="submitTestEnvironmentCode"
+          selection-only @change="selectTestDeployment" />
+
       </template>
       <template v-if="['SUBMIT_TESTING', 'SUBMIT_ACCEPTANCE'].includes(stageActionForm.action)">
         <el-form-item :label="stageActionForm.action === 'SUBMIT_ACCEPTANCE' ? '实际工时（可选）' : '实际开发工时'">
@@ -4691,6 +4775,10 @@ onMounted(loadBaseData)
                     <div class="ai-status-text">
                       <div class="ai-status-label">{{ resolveDevelopmentAnalysisStatusLabel(developmentAnalysis?.status) }}</div>
                       <div v-if="developmentAnalysis?.message" class="ai-status-message">{{ developmentAnalysis.message }}</div>
+                      <details v-if="developmentAnalysis?.status === 'FAILED' && developmentAnalysis.errorStack" class="analysis-error-details">
+                        <summary>查看错误堆栈</summary>
+                        <pre>{{ developmentAnalysis.errorStack }}</pre>
+                      </details>
                     </div>
                   </div>
                   <div class="ai-status-actions">
@@ -4897,7 +4985,7 @@ onMounted(loadBaseData)
                                 collapse-tags
                                 collapse-tags-tooltip
                                 placeholder="选择涉及系统"
-                                :no-data-text="stageActionForm.projectGroup ? '当前业务线暂无可选系统' : '请先选择业务线'"
+                                :no-data-text="stageActionForm.projectGroup ? '当前业务线暂无可选系统' : '请先完善需求本身的业务线'"
                                 style="width: 100%"
                               >
                                   <el-option
@@ -4971,7 +5059,10 @@ onMounted(loadBaseData)
                 <div v-if="aiDevelopment" class="task-evaluation-section">
                   <div class="section-title section-title--actions">
                     <span>AI 分支开发</span>
-                    <el-button v-if="aiDevelopment.executionStatus === 'FAILED'" size="small" type="primary" plain @click="retryAiDevelopmentAction">重试</el-button>
+                    <el-button
+                      v-if="canOperateStage && selectedDetail?.demandStatus === '开发中' && (aiDevelopment.executionStatus === 'FAILED' || (aiDevelopment.executionStatus === 'PENDING' && !aiDevelopment.agentTaskId))"
+                      size="small" type="primary" plain :loading="retryingAiDevelopment" @click="retryAiDevelopmentAction"
+                    >重试</el-button>
                   </div>
                   <div class="task-evaluation-info-card">
                     <div class="task-metric-grid">
@@ -4992,13 +5083,19 @@ onMounted(loadBaseData)
                   </div>
                 </div>
 
+                <IntakeTestDeploymentPanel v-if="selectedDetail" :key="'test-'+selectedDetail.id"
+                  :intake-id="selectedDetail.id" :can-publish="canOperateStage" />
                 <div v-if="submitTestReview" class="task-evaluation-section">
                   <div class="section-title">提测 AI 审核与回执</div>
-                  <div class="task-evaluation-info-card">
+                    <div class="task-evaluation-info-card">
                     <div class="task-metric-grid">
                       <div class="task-metric-card">
                         <div class="task-metric-label">审核结论</div>
                         <div class="task-metric-value">{{ resolveSubmitTestReviewStatusLabel(submitTestReview.reviewStatus) }}</div>
+                      </div>
+                      <div class="task-metric-card">
+                        <div class="task-metric-label">提测环境</div>
+                        <div class="task-metric-value">{{ submitTestReview.jenkinsEnvironmentCode ?? '-' }}</div>
                       </div>
                       <div class="task-metric-card">
                         <div class="task-metric-label">禅道测试单</div>
@@ -5122,6 +5219,11 @@ onMounted(loadBaseData)
                   >
                     失败原因：{{ developmentRoundDialogRun.message }}
                   </div>
+                  <details v-if="developmentRoundDialogRun.status === 'FAILED' && developmentRoundDialogRun.errorStack" class="analysis-error-details">
+                    <summary>查看错误堆栈</summary>
+                    <pre>{{ developmentRoundDialogRun.errorStack }}</pre>
+                  </details>
+                  <div v-else-if="developmentRoundDialogRun.status === 'FAILED'" class="muted-text">该轮未保存错误堆栈。</div>
                   <template v-if="developmentRoundDialogRun.draft">
                     <div class="task-description-block">
                       <div class="task-description-title">评估摘要</div>
@@ -5462,6 +5564,22 @@ onMounted(loadBaseData)
       <el-button type="danger" :loading="closeDemandSubmitting" @click="submitCloseDemand">确认关闭</el-button>
     </template>
   </el-dialog>
+
+    <el-dialog v-model="aiAgentDialogVisible" title="设置开发数字员工" width="480px" append-to-body>
+      <el-select
+        v-model="aiAgentFormAgentId"
+        clearable
+        filterable
+        placeholder="选择后设计完成触发的 AI 开发由该数字员工执行；清空则用系统默认"
+        style="width: 100%"
+      >
+        <el-option v-for="agent in createAgentOptions" :key="agent.id" :label="agent.name" :value="agent.id" />
+      </el-select>
+      <template #footer>
+        <el-button @click="aiAgentDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="aiAgentSaving" @click="submitAiAgentUpdate">保存</el-button>
+      </template>
+    </el-dialog>
 </template>
 
 <style scoped>
@@ -6570,5 +6688,18 @@ onMounted(loadBaseData)
 
 .clarification-round-subsection {
   margin-top: 12px;
+}
+
+.analysis-error-details { margin-top: 12px; min-width: 0; }
+.analysis-error-details summary { cursor: pointer; }
+.analysis-error-details pre {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  padding: 12px;
+  background: var(--el-fill-color-light);
+  font-size: 12px;
 }
 </style>

@@ -17,8 +17,8 @@ export const menuItems: MenuItem[] = [
     label: '运维',
     path: '/ops',
     children: [
-      { key: 'ops-monitors', label: '业务监测', path: '/ops/monitors', permission: 'ops:monitor:view' },
-      { key: 'ops-accounting', label: '账务监测', path: '/ops/accounting', permission: 'ops:accounting:view' },
+      { key: 'ops-monitors', label: '服务监测', path: '/ops/monitors', permission: 'ops:monitor:view' },
+      { key: 'ops-accounting', label: '业务监测', path: '/ops/accounting', permission: 'ops:accounting:view' },
       { key: 'ops-system-alerts', label: '系统预警', path: '/ops/system-alerts', permission: 'ops:system-alert:view' },
     ],
   },
