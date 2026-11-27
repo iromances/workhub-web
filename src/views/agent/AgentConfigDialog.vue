@@ -41,7 +41,7 @@ async function submit() {
     const agent = await saveAgent(props.agent?.id || null, props.agent?.version ?? null, {
       ...form, name: form.name.trim(), model: form.model?.trim() || null, scopes: scopesFromKeys(selectedScopes.value),
     })
-    ElMessage.success(props.agent ? 'Agent 配置已保存' : 'Agent 已创建，启用后可执行任务')
+    ElMessage.success(props.agent ? 'Agent 配置已保存' : 'Agent 已创建，启用后即可执行')
     emit('saved', agent)
     emit('update:modelValue', false)
   } catch (cause) { error.value = errorText(cause) } finally { saving.value = false }
@@ -55,7 +55,7 @@ async function submit() {
       <el-form-item label="名称" required><el-input v-model="form.name" maxlength="128" placeholder="例如：工作台巡检助手" /></el-form-item>
       <el-form-item label="岗位" required><el-select v-model="form.position" filterable placeholder="选择岗位；可输入关键字过滤"><el-option v-for="item in options.positions" :key="item.code" :value="item.code" :label="item.name" /></el-select></el-form-item>
       <el-form-item label="职责" required>
-        <el-input v-model="form.instructions" type="textarea" :autosize="{ minRows: 8, maxRows: 24 }" maxlength="12000" :placeholder="`建议公式：身份 + 常态职责边界 + 输出习惯 + 升级规则。写长期不变的常态职责，本次要交付的内容写到任务目标里，业务线/环境在业务范围选择，不写代码坐标。\n例如：你是xx业务线的运维数字员工。负责监控逾期账款、扣款失败与账务差异，按周输出巡检报告。只做查询与分析，不得修改业务数据；发现重大差异或需要人工决策的事项，在报告中单列“需人工处理”并说明理由。`" />
+        <el-input v-model="form.instructions" type="textarea" :autosize="{ minRows: 8, maxRows: 24 }" maxlength="12000" :placeholder="`建议公式：身份 + 常态职责边界 + 输出习惯 + 升级规则。写长期不变的常态职责，常态的工作目标在「任务成果 → 执行设置」里填写，业务线/环境在业务范围选择，不写代码坐标。\n例如：你是xx业务线的运维数字员工。负责监控逾期账款、扣款失败与账务差异，按周输出巡检报告。只做查询与分析，不得修改业务数据；发现重大差异或需要人工决策的事项，在报告中单列“需人工处理”并说明理由。`" />
       </el-form-item>
       <el-form-item label="AI 接入" required>
         <el-select :model-value="form.providerConfigId || undefined" placeholder="选择系统已配置的 AI" filterable @update:model-value="form.providerConfigId = $event ?? 0">
@@ -77,7 +77,7 @@ async function submit() {
           <el-checkbox value="INBOX">站内信</el-checkbox>
           <el-checkbox value="WECOM">企微机器人</el-checkbox>
         </el-checkbox-group>
-        <p class="alert-hint">选企微机器人后，可在分派任务时填写该任务的机器人 webhook 地址。</p>
+        <p class="alert-hint">选企微机器人后，在「任务成果 → 执行设置」里填写机器人的 webhook 地址。</p>
       </el-form-item>
       <div class="limits">
         <el-form-item label="行动上限"><el-input-number v-model="form.maxSteps" :min="1" :max="200" /></el-form-item>

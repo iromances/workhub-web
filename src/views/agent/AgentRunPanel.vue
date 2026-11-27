@@ -18,7 +18,8 @@ import { buildAgentReportDocument } from './agentReportPresentation'
 import { errorText, eventLabels, eventSummary, localTime, prettyPayload, requestKey, statusLabels, statusTone } from './agentPresentation'
 
 const router = useRouter()
-const props = defineProps<{ detail: AgentRunDetail; businessLines?: AgentOptions['scopes'] }>()
+/** 数字员工任务成果里的一轮运行；dutyObjective 为该员工常设配置的工作目标。 */
+const props = defineProps<{ detail: AgentRunDetail; businessLines?: AgentOptions['scopes']; dutyObjective?: string }>()
 const emit = defineEmits<{ refresh: []; newRun: [AgentRun] }>()
 const auth = useAuthStore()
 const busy = ref(false)
@@ -59,6 +60,11 @@ const monitorResults = computed(() => monitorEvidence(props.detail.events))
 const formalOverview = computed(() => monitorOverview(monitorResults.value))
 const monitorRuleCount = computed(() => monitorResults.value.reduce((total, batch) => total + batch.rules.length, 0))
 const eventRows = computed(() => props.detail.events.slice((eventPage.value - 1) * 20, eventPage.value * 20))
+/** 历史运行可能来自需求开发、问题修复等其他任务；目标与常设配置不同时才单独标出。 */
+const foreignObjective = computed(() => {
+  const objective = props.detail.specification.objective
+  return objective && objective !== props.dutyObjective ? objective : ''
+})
 
 function downloadReport() {
   const objective = props.detail.specification.objective || '数字员工运行报告'
@@ -80,7 +86,7 @@ function downloadReport() {
 watch(() => props.detail.run.id, () => { reply.value = ''; error.value = ''; eventPage.value = 1; replyAttempt = null; retryKey = requestKey(); tab.value = 'result' })
 async function cancel() {
   const target = run.value
-  try { await ElMessageBox.confirm('停止这次运行？已发出的外部操作仍会等待确认结果。', '停止任务', { type: 'warning', confirmButtonText: '请求停止', cancelButtonText: '继续执行' }) }
+  try { await ElMessageBox.confirm('停止这次运行？已发出的外部操作仍会等待确认结果。', '停止运行', { type: 'warning', confirmButtonText: '请求停止', cancelButtonText: '继续执行' }) }
   catch { return }
   busy.value = true
   error.value = ''
@@ -142,7 +148,8 @@ async function sendReply() {
       <span>运行概况</span><span><strong>{{ run.stepCount }}</strong> 次行动</span><span><strong>{{ Math.floor(run.elapsedMillis / 1000) }}</strong> 秒</span><span><strong>{{ detail.artifacts.length }}</strong> 项产物</span>
     </div>
     <details class="run-technical"><summary>运行信息</summary><p class="run-meta">模型：{{ detail.configuration.model || '未记录模型' }}</p></details>
-    <p v-if="detail.specification.expectedArtifacts.some(kind => ['DEPLOYMENT', 'VERIFICATION'].includes(kind))" class="run-meta">本轮完成目标：{{ detail.specification.completionTargets?.length ? detail.specification.completionTargets.map(scope => `${scope.businessLineCode} / ${scope.environmentCode === 'TEST' ? '测试' : '生产'}`).join('、') : '尚未明确，请重新分派任务' }}</p>
+    <p v-if="foreignObjective" class="run-objective">本轮目标：{{ foreignObjective }}</p>
+    <p v-if="detail.specification.expectedArtifacts.some(kind => ['DEPLOYMENT', 'VERIFICATION'].includes(kind))" class="run-meta">本轮完成目标：{{ detail.specification.completionTargets?.length ? detail.specification.completionTargets.map(scope => `${scope.businessLineCode} / ${scope.environmentCode === 'TEST' ? '测试' : '生产'}`).join('、') : '尚未明确，请在执行设置中选择' }}</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon class="feedback" />
     <el-alert v-if="run.errorMessage" :title="run.errorMessage" :type="run.status === 'FAILED' ? 'error' : 'warning'" :closable="false" show-icon class="feedback" />
     <el-alert v-if="run.status === 'CANCELLING'" title="正在确认执行与外部操作的停止结果，尚未完成取消。" type="warning" :closable="false" class="feedback" />
@@ -206,6 +213,7 @@ async function sendReply() {
 .run-facts strong { font-size: 17px; color: #304b57; }
 .run-technical { margin-bottom: 16px; }
 .run-meta { color: #6b7280; font-size: 12px; margin-left: 10px; }
+.run-objective { margin: 0 0 12px; color: #314b59; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .feedback { margin: 12px 0; }
 pre, .event-summary { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
 pre { max-height: 500px; overflow: auto; padding: 12px; background: #f6f8fa; border-radius: 6px; font-size: 12px; }

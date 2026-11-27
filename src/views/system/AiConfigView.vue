@@ -23,6 +23,7 @@ import type {
   AiProviderGroup,
   AiUseCaseConfig,
   AiUseCaseConfigRequest,
+  CodexModelCatalog,
 } from '@/types/ai-config'
 
 import { createCodexCatalogLoader, matchingEffort, reasoningAfterModelChange, validateCliSelection,
@@ -148,6 +149,38 @@ const cliCatalogLoader = createCodexCatalogLoader(cliCatalog, fetchCliCatalog,
 const useCaseCliCatalog = reactive<CodexCatalogState>({ catalog: null, loading: false, error: '' })
 const useCaseCliCatalogLoader = createCodexCatalogLoader(useCaseCliCatalog, fetchCliCatalog,
   error => errorMessage(error, '加载通道模型列表失败，请重试'))
+
+/** 列表展示用名称表：按 CLI 配置签名去重，会话内每签名只请求一次；失败静默回退原始标识并允许下次重试 */
+const cliModelCatalogs = new Map<string, Promise<CodexModelCatalog>>()
+const cliModelNames = reactive<Record<string, string>>({})
+
+function cliCatalogSignature(provider: AiProviderConfig) {
+  return [resolvedCliType(provider), provider.cliCommand, provider.cliWorkingDirectory,
+    provider.cliRuntimeCommand, provider.cliBuiltinConfigPath, provider.cliPersonalConfigPath].join('|')
+}
+
+function loadCliModelNames() {
+  providerList.value.filter(item => item.channelType === 'CLI').forEach(item => {
+    const signature = cliCatalogSignature(item)
+    if (cliModelCatalogs.has(signature)) return
+    const request = fetchCliCatalog({
+      cliType: resolvedCliType(item),
+      cliCommand: item.cliCommand || '',
+      cliWorkingDirectory: item.cliWorkingDirectory,
+      cliRuntimeCommand: item.cliRuntimeCommand,
+      cliBuiltinConfigPath: item.cliBuiltinConfigPath,
+      cliPersonalConfigPath: item.cliPersonalConfigPath,
+    })
+    cliModelCatalogs.set(signature, request)
+    request.then(catalog => catalog.models.forEach(model => {
+      cliModelNames[model.model] = model.displayName
+    })).catch(() => cliModelCatalogs.delete(signature))
+  })
+}
+
+function cliModelText(value?: string) {
+  return value ? (cliModelNames[value] || value) : '-'
+}
 let originalCli: ChannelForm | null = null
 const isZCode = computed(() => providerForm.cli.cliType === 'ZCODE')
 const cliModels = computed(() => cliCatalog.catalog?.models ?? [])
@@ -456,6 +489,7 @@ async function loadProviders() {
   providerLoading.value = true
   try {
     providerList.value = await fetchAiProviders()
+    loadCliModelNames()
   } catch (error) {
     ElMessage.error(errorMessage(error, '加载 AI 接入配置失败'))
   } finally {
@@ -934,6 +968,11 @@ function modelText(value?: string) {
   return optionText(modelOptions, value)
 }
 
+/** 使用场景表模型列：CLI 绑定行查目录名称表，API 行走字典 */
+function effectiveModelText(row: AiUseCaseConfig) {
+  return row.channelType === 'CLI' ? cliModelText(row.effectiveModel) : modelText(row.effectiveModel)
+}
+
 function reasoningText(value?: string) {
   return optionText(reasoningOptions, value)
 }
@@ -1066,7 +1105,7 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column label="模型" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">
-              <div class="main-text">{{ modelText(row.effectiveModel) }} <el-tag size="small" :type="row.modelSource === 'USE_CASE' ? 'warning' : 'info'">{{ sourceText(row.modelSource) }}</el-tag></div>
+              <div class="main-text">{{ effectiveModelText(row) }} <el-tag size="small" :type="row.modelSource === 'USE_CASE' ? 'warning' : 'info'">{{ sourceText(row.modelSource) }}</el-tag></div>
               <div class="sub-text">{{ reasoningText(row.effectiveReasoningLevel) }} / {{ speedText(row.effectiveSpeedMode) }}</div>
             </template>
           </el-table-column>
@@ -1136,7 +1175,7 @@ onMounted(async () => {
                 <span class="inline-meta">{{ row.api?.apiProtocol || '-' }}</span>
               </div>
               <div class="sub-text">{{ row.api?.apiBaseUrl || '-' }}</div>
-              <div class="sub-text">默认：{{ row.api?.defaultModel || '-' }} / {{ reasoningText(row.api?.defaultReasoningLevel) }} / {{ speedText(row.api?.defaultSpeedMode) }}</div>
+              <div class="sub-text">默认：{{ modelText(row.api?.defaultModel) }} / {{ reasoningText(row.api?.defaultReasoningLevel) }} / {{ speedText(row.api?.defaultSpeedMode) }}</div>
             </template>
           </el-table-column>
           <el-table-column label="CLI通道" min-width="220" show-overflow-tooltip>
@@ -1147,7 +1186,7 @@ onMounted(async () => {
                 <span class="inline-meta">{{ row.cli?.cliCommand || '-' }}</span>
               </div>
               <div class="sub-text">{{ row.cli?.cliWorkingDirectory || '-' }}</div>
-              <div class="sub-text">默认：{{ row.cli?.defaultModel || '-' }} / {{ reasoningText(row.cli?.defaultReasoningLevel) }} / {{ speedText(row.cli?.defaultSpeedMode) }}</div>
+              <div class="sub-text" :title="row.cli?.defaultModel || ''">默认：{{ cliModelText(row.cli?.defaultModel) }} / {{ reasoningText(row.cli?.defaultReasoningLevel) }} / {{ speedText(row.cli?.defaultSpeedMode) }}</div>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="96" fixed="right">

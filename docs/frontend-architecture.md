@@ -145,11 +145,11 @@ AI 接入弹框中的 CLI 通道从后端 `/manage/system/ai-provider/codex-mode
 
 2026-11-06 起菜单、路由标题与页面标题显示“数字员工”；页内 Agent 实体称谓与代码标识（`/agents`、`agent:view`、`src/views/agent/` 等）保持不变。
 
-- 新增 `/agents`（agent:view），紧邻工作台入口，按 Agent → 任务 → 运行呈现。页面配置多 Agent、选择已有 AI、分派立即/周期任务、调整周期、查看独立运行、补充指令、取消和重试。
+- 新增 `/agents`（agent:view），紧邻工作台入口。2026-11-26 起按 Agent → 运行呈现：页面配置多 Agent、选择已有 AI，员工列表「任务成果」直接打开该员工的任务成果弹框并「开始新一轮」，常设配置经「执行设置」调整（含手动/周期），可查看独立运行、补充指令、取消和重试；不再有任务列表与「分派任务」。
 - 类型与 API 分别位于 `src/types/agent.ts`、`src/api/agent.ts`；页面放在 `src/views/agent/`。表单及选择状态留在页面，不新增全局 store。
-- 接口使用 `/api/agents`、`/api/agents/options`、`/api/agent-tasks`；后端返回已授权的选择项，不向页面发送密钥、执行命令或全局 MCP Token。写入携带版本，任务分派/运行/补充使用请求标识；网络重试沿用原标识。
+- 接口使用 `/api/agents`、`/api/agents/{id}/duty-task`、`/api/agents/{id}/runs`、`/api/agents/options` 与任务级 `/api/agent-tasks`（执行、执行设置与运行操作按职责执行任务或运行自身的 `taskId` 调用）；后端返回已授权的选择项，不向页面发送密钥、执行命令或全局 MCP Token。写入携带版本，运行/补充使用请求标识；网络重试沿用原标识。
 - 运行和产物只呈现后端事实；`CANCELLING` 表示正在停止，`WAITING_RESOURCE` 表示需处理执行资源或核实外部状态。不能把已取消请求显示为已停止。`AI_REPORT` 与平台测试/部署证据分别标注。
-- 页面离开或被 KeepAlive 停用时停止轮询，恢复时重新读取状态。异步请求绑定当前 Agent/任务/运行，旧响应不能覆盖新选择。时间字段来自 UTC，显示为浏览器本地时间。
+- 页面离开或被 KeepAlive 停用时停止轮询，恢复时重新读取状态。异步请求绑定当前 Agent/运行，旧响应不能覆盖新选择。时间字段来自 UTC，显示为浏览器本地时间。
 - 分支、Jenkins 审核和上线验证入口随后端相应契约接入；没有实际结果时不补造成功记录。
 - 工具管理（2026-11-07）：数字员工页头部新增「工具管理」入口（`agent:manage` 可见），打开 `AgentToolsDialog.vue` 列表编辑每个工具的人读名称与短描述，契约为 `GET/PUT /api/agent-tools`（乐观锁版本，保存后刷新 options）。`/api/agents/options` 的 tools 返回 `{code, name, description}`，Agent 配置与任务分派的工具选择器按名称显示、短描述作辅助提示；工具本体与 AI 运行时目录由后端代码定义，页面不提供增删。
 

@@ -9,3 +9,7 @@ export function buildIntakeTodoPath(id: number, todoId: number) {
 export function buildIntakeTodoStatusPath(id: number, todoId: number) {
   return `${buildIntakeTodoPath(id, todoId)}/status`
 }
+
+export function buildIntakeTodoScreenshotsPath(id: number, todoId: number) {
+  return `${buildIntakeTodoPath(id, todoId)}/screenshots`
+}

@@ -2,9 +2,9 @@
 import IntakeTestDeploymentPanel from './IntakeTestDeploymentPanel.vue'
 import type { TestDeploymentRequest } from '@/types/test-deployment'
 
-import { CircleCheckFilled, CircleCloseFilled, Clock, DocumentCopy, EditPen, Loading, Refresh } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, CircleCheckFilled, CircleCloseFilled, Clock, Close, DocumentCopy, EditPen, Loading, Picture, Plus, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { fetchAgents } from '@/api/agent'
@@ -42,6 +42,7 @@ import {
   retryIntakeEnrichment,
   startClarificationAnalysis,
   startSubmitTestReview,
+  syncIntakeTodoScreenshots,
   updateDevelopmentAnalysisDraft,
   updateIntakeBusinessLine,
   updateIntakeDevelopmentBranch,
@@ -65,6 +66,10 @@ import {
   formatActiveTodoLabel,
   formatTodoTabLabel,
   isActiveIntakeTodoStatus,
+  pickPastedTodoScreenshots,
+  pickTodoScreenshotFiles,
+  resolveTodoScreenshotChange,
+  splitTodoScreenshots,
   validateIntakeTodoEditableForm,
   validateIntakeTodoStatusForm,
 } from './intakeTodoForms'
@@ -111,6 +116,9 @@ const previewVisible = ref(false)
 const previewImageUrl = ref('')
 const previewImageName = ref('')
 const previewContentType = ref('')
+// 预览切换列表：待办截图传入同一待办的全部截图，需求附件仍按单张预览
+const previewItems = ref<IntakeAttachment[]>([])
+const previewIndex = ref(0)
 const stageActionVisible = ref(false)
 const stageSubmitting = ref(false)
 const stageActionRow = ref<IntakeSummary | null>(null)
@@ -161,6 +169,13 @@ const todoStatusVisible = ref(false)
 const todoStatusSubmitting = ref(false)
 const statusEditingTodo = ref<IntakeTodo | null>(null)
 const deletingTodoId = ref<number | null>(null)
+// 待办弹框里的截图：已有截图只保留 keptIds 中的，其余视为暂存移除；新选的截图保存时才上传
+const todoScreenshotExisting = ref<IntakeAttachment[]>([])
+const todoScreenshotKeptIds = ref<number[]>([])
+const todoScreenshotFiles = ref<File[]>([])
+const todoScreenshotLocalUrls = reactive(new Map<string, string>())
+// 新增待办已创建但截图上传失败时记住待办 ID，重试不重复新增
+const todoFormCreatedTodoId = ref<number | null>(null)
 const developmentAnalysis = ref<DevelopmentAnalysisResponse | null>(null)
 const developmentHistory = ref<DevelopmentAnalysisResponse[]>([])
 const developmentRoundDialogVisible = ref(false)
@@ -255,6 +270,7 @@ const stageActionForm = reactive({
   acceptanceTime: '',
   occurredAt: '',
   aiClarificationEnabled: true,
+  aiDevelopmentEnabled: true,
   projectGroup: '',
 })
 
@@ -282,6 +298,29 @@ const detailTodos = computed(() => selectedDetail.value?.todos || [])
 const activeDetailTodoCount = computed(() => countActiveIntakeTodos(detailTodos.value))
 
 const todoFormTitle = computed(() => (todoFormMode.value === 'create' ? '新增需求待办' : '编辑需求待办'))
+
+type TodoScreenshotDraftItem =
+  | { key: string; name: string; url: string; attachment: IntakeAttachment; file?: undefined }
+  | { key: string; name: string; url: string; attachment?: undefined; file: File }
+
+const todoScreenshotDraft = computed<TodoScreenshotDraftItem[]>(() => {
+  const kept = new Set(todoScreenshotKeptIds.value)
+  const existing = todoScreenshotExisting.value
+    .filter((item) => kept.has(item.id))
+    .map((item) => ({ key: `saved-${item.id}`, name: item.fileName, url: todoScreenshotUrls.get(item.id) || '', attachment: item }))
+  const added = todoScreenshotFiles.value.map((file) => ({
+    key: `local-${fileIdentity(file)}`,
+    name: file.name,
+    url: todoScreenshotLocalUrls.get(fileIdentity(file)) || '',
+    file,
+  }))
+  return [...existing, ...added]
+})
+
+// 待办截图缩略图地址：按附件 ID 缓存原图，只在「需求待办」页签激活时拉取，切换需求即释放
+const todoScreenshotUrls = reactive(new Map<number, string>())
+const todoScreenshotLoading = new Set<number>()
+let todoScreenshotCacheVersion = 0
 
 const previewKind = computed(() => {
   if (!previewImageUrl.value) {
@@ -416,6 +455,9 @@ function syncDevelopmentForms(detail: IntakeDetail | null) {
 
 function normalizeIntakeDetail(detail: IntakeDetail) {
   detail.todos ||= []
+  detail.todos.forEach((todo) => {
+    todo.screenshots ||= []
+  })
   detail.attachments ||= []
   detail.histories ||= []
   detail.relatedWorkItems ||= []
@@ -567,6 +609,8 @@ function openCreateTodoDialog() {
   todoForm.content = ''
   todoForm.assigneeUserName = authStore.userName || ''
   todoForm.plannedAt = ''
+  todoFormCreatedTodoId.value = null
+  resetTodoScreenshotDraft([])
   todoFormVisible.value = true
 }
 
@@ -577,6 +621,8 @@ function openEditTodoDialog(todo: IntakeTodo) {
   todoForm.content = todo.content || ''
   todoForm.assigneeUserName = todo.assigneeUserName || ''
   todoForm.plannedAt = normalizePickerDateTimeValue(todo.plannedAt)
+  todoFormCreatedTodoId.value = null
+  resetTodoScreenshotDraft(todo.screenshots)
   todoFormVisible.value = true
 }
 
@@ -587,8 +633,11 @@ function resetTodoFormDialog() {
   todoForm.assigneeUserName = ''
   todoForm.plannedAt = ''
   todoFormMode.value = 'create'
+  todoFormCreatedTodoId.value = null
+  resetTodoScreenshotDraft([])
 }
 
+/** 先保存待办字段，再提交截图变更；截图失败时保留弹框内容，重试不会重复新增待办。 */
 async function submitTodoForm() {
   if (!selectedDetail.value) {
     return
@@ -598,6 +647,7 @@ async function submitTodoForm() {
     ElMessage.warning(validationMessage)
     return
   }
+  const isEdit = todoFormMode.value === 'edit' && Boolean(editingTodo.value)
   const intakeId = selectedDetail.value.id
   const payload = {
     title: todoForm.title.trim(),
@@ -605,24 +655,158 @@ async function submitTodoForm() {
     assigneeUserName: cleanNullableBusinessValue(todoForm.assigneeUserName),
     plannedAt: cleanNullableBusinessValue(todoForm.plannedAt),
   }
+  let todoSaved = false
   todoFormSubmitting.value = true
   try {
-    if (todoFormMode.value === 'edit' && editingTodo.value) {
+    let todoId: number
+    if (isEdit && editingTodo.value) {
       await updateIntakeTodo(intakeId, editingTodo.value.id, payload)
-      ElMessage.success('待办已更新')
+      todoId = editingTodo.value.id
+    } else if (todoFormCreatedTodoId.value === null) {
+      todoId = (await createIntakeTodo(intakeId, payload)).id
+      todoFormCreatedTodoId.value = todoId
     } else {
-      await createIntakeTodo(intakeId, payload)
-      ElMessage.success('待办已新增')
+      todoId = todoFormCreatedTodoId.value
     }
-    todoFormVisible.value = false
-    await refreshSelectedDetail(intakeId)
-    await loadIntakeRecords()
+    todoSaved = true
+    const screenshotChange = isEdit
+      ? resolveTodoScreenshotChange(todoScreenshotExisting.value, todoScreenshotKeptIds.value, todoScreenshotFiles.value)
+      : { removedIds: [], files: todoScreenshotFiles.value }
+    if (screenshotChange.files.length || screenshotChange.removedIds.length) {
+      await syncIntakeTodoScreenshots(intakeId, todoId, screenshotChange)
+      dropTodoScreenshotUrls(screenshotChange.removedIds)
+    }
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, todoFormMode.value === 'edit' ? '更新待办失败' : '新增待办失败'))
+    ElMessage.error(
+      todoSaved
+        ? `待办已保存，但截图更新失败：${resolveErrorMessage(error, '请重试')}`
+        : resolveErrorMessage(error, isEdit ? '更新待办失败' : '新增待办失败'),
+    )
     console.error(error)
+    // 待办已经落库，后台刷新让列表与它一致；弹框保持打开供重试
+    if (todoSaved) {
+      void refreshDetailQuietly(intakeId)
+    }
+    return
   } finally {
     todoFormSubmitting.value = false
   }
+  todoFormVisible.value = false
+  ElMessage.success(isEdit ? '待办已更新' : '待办已新增')
+  await refreshDetailQuietly(intakeId, '保存成功，但详情刷新失败，请重新打开详情')
+}
+
+/** 刷新详情与列表；失败时按需提示，不向调用方抛错。 */
+async function refreshDetailQuietly(intakeId: number, failureMessage = '') {
+  try {
+    await refreshSelectedDetail(intakeId)
+    await loadIntakeRecords()
+  } catch (error) {
+    if (failureMessage) {
+      ElMessage.error(failureMessage)
+    }
+    console.error(error)
+  }
+}
+
+function resetTodoScreenshotDraft(existing: IntakeAttachment[]) {
+  releaseTodoScreenshotLocalUrls()
+  todoScreenshotExisting.value = existing
+  todoScreenshotKeptIds.value = existing.map((item) => item.id)
+  todoScreenshotFiles.value = []
+}
+
+function releaseTodoScreenshotLocalUrls() {
+  todoScreenshotLocalUrls.forEach((url) => URL.revokeObjectURL(url))
+  todoScreenshotLocalUrls.clear()
+}
+
+function appendTodoScreenshots(files: File[]) {
+  const picked = pickTodoScreenshotFiles(files)
+  const merged = mergeFiles(todoScreenshotFiles.value, picked.files)
+  merged.forEach((file) => {
+    const key = fileIdentity(file)
+    if (!todoScreenshotLocalUrls.has(key)) {
+      todoScreenshotLocalUrls.set(key, URL.createObjectURL(file))
+    }
+  })
+  todoScreenshotFiles.value = merged
+  if (picked.ignored) {
+    ElMessage.warning(`已忽略 ${picked.ignored} 个非图片文件`)
+  }
+}
+
+function handleTodoScreenshotChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  appendTodoScreenshots(Array.from(target.files ?? []))
+  target.value = ''
+}
+
+function handleDroppedTodoScreenshots(event: DragEvent) {
+  appendTodoScreenshots(Array.from(event.dataTransfer?.files ?? []))
+}
+
+/** 待办弹框打开期间在文档层监听粘贴：移除截图等操作会让焦点离开表单，不能只靠弹框内元素冒泡。 */
+function handleTodoPaste(event: ClipboardEvent) {
+  const pasted = pickPastedTodoScreenshots(event.clipboardData)
+  if (!pasted.length) {
+    return
+  }
+  appendTodoScreenshots(pasted)
+  ElMessage.success(`已粘贴 ${pasted.length} 张截图`)
+  event.preventDefault()
+}
+
+function removeTodoScreenshot(item: TodoScreenshotDraftItem) {
+  if (item.attachment) {
+    const { id } = item.attachment
+    todoScreenshotKeptIds.value = todoScreenshotKeptIds.value.filter((keptId) => keptId !== id)
+    return
+  }
+  const key = fileIdentity(item.file)
+  todoScreenshotFiles.value = todoScreenshotFiles.value.filter((file) => fileIdentity(file) !== key)
+  const url = todoScreenshotLocalUrls.get(key)
+  if (url) {
+    URL.revokeObjectURL(url)
+    todoScreenshotLocalUrls.delete(key)
+  }
+}
+
+async function loadTodoScreenshotUrl(item: IntakeAttachment) {
+  if (todoScreenshotUrls.has(item.id) || todoScreenshotLoading.has(item.id)) {
+    return
+  }
+  const version = todoScreenshotCacheVersion
+  todoScreenshotLoading.add(item.id)
+  try {
+    const blob = await downloadAttachment(item.id)
+    const url = URL.createObjectURL(blob)
+    if (version !== todoScreenshotCacheVersion) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    todoScreenshotUrls.set(item.id, url)
+  } catch (error) {
+    console.error(error)
+  } finally {
+    todoScreenshotLoading.delete(item.id)
+  }
+}
+
+function clearTodoScreenshotUrls() {
+  todoScreenshotCacheVersion += 1
+  todoScreenshotUrls.forEach((url) => URL.revokeObjectURL(url))
+  todoScreenshotUrls.clear()
+}
+
+function dropTodoScreenshotUrls(attachmentIds: number[]) {
+  attachmentIds.forEach((id) => {
+    const url = todoScreenshotUrls.get(id)
+    if (url) {
+      URL.revokeObjectURL(url)
+      todoScreenshotUrls.delete(id)
+    }
+  })
 }
 
 function openTodoStatusDialog(todo: IntakeTodo) {
@@ -686,6 +870,7 @@ async function deleteTodoFromDetail(todo: IntakeTodo) {
   deletingTodoId.value = todo.id
   try {
     await deleteIntakeTodo(intakeId, todo.id)
+    dropTodoScreenshotUrls(todo.screenshots.map((item) => item.id))
     ElMessage.success('待办已删除')
     await refreshSelectedDetail(intakeId)
     await loadIntakeRecords()
@@ -1204,23 +1389,29 @@ async function loadAiDevelopmentFor(id: number) {
 }
 
 async function retryAiDevelopmentAction() {
-  if (!aiDevelopment.value || retryingAiDevelopment.value) {
+  if (retryingAiDevelopment.value) {
     return
   }
-  const intakeId = aiDevelopment.value.intakeId
+  const existing = aiDevelopment.value
+  const intakeId = existing?.intakeId ?? selectedDetail.value?.id
+  if (!intakeId) {
+    return
+  }
+  // 无执行记录视为设计完成时选择人工开发，本次为手动首次启动
+  const firstStart = !existing
   retryingAiDevelopment.value = true
   try {
     const result = await retryIntakeAiDevelopment(intakeId)
-    if (aiDevelopment.value?.intakeId === intakeId) {
+    if (selectedDetail.value?.id === intakeId || aiDevelopment.value?.intakeId === intakeId) {
       aiDevelopment.value = result
     }
     if (result.executionStatus === 'FAILED') {
-      ElMessage.error(result.executionMessage || '重试 AI 开发失败')
+      ElMessage.error(result.executionMessage || (firstStart ? '启动 AI 开发失败' : '重试 AI 开发失败'))
     } else {
-      ElMessage.success('AI 开发重试已发起')
+      ElMessage.success(firstStart ? 'AI 开发已发起' : 'AI 开发重试已发起')
     }
   } catch (error) {
-    ElMessage.error(resolveErrorMessage(error, '重试 AI 开发失败'))
+    ElMessage.error(resolveErrorMessage(error, firstStart ? '启动 AI 开发失败' : '重试 AI 开发失败'))
     console.error(error)
   } finally {
     retryingAiDevelopment.value = false
@@ -1351,6 +1542,14 @@ function isOperationsDemand(requirementType: string | null | undefined) {
 function isDevelopmentRequirement(detail: IntakeDetail | null) {
   return detail?.structuredData?.requirementType === '研发需求'
 }
+
+/** 开发中研发需求且尚无 AI 开发执行记录：可手动首次启动（设计完成时选择人工开发的补发入口）。 */
+const aiDevelopmentStartable = computed(() => Boolean(
+  canOperateStage.value
+  && selectedDetail.value?.demandStatus === '开发中'
+  && isDevelopmentRequirement(selectedDetail.value)
+  && !aiDevelopment.value
+))
 
 function canCloseDemand(record: IntakeDetail | IntakeSummary | null) {
   return Boolean(canOperateStage.value && record?.demandStatus && !['已完成', '终止关闭', '已暂停'].includes(record.demandStatus))
@@ -1630,6 +1829,7 @@ function resetStageActionForm() {
   stageActionForm.acceptanceTime = ''
   stageActionForm.occurredAt = normalizePickerDateValue(new Date().toISOString())
   stageActionForm.aiClarificationEnabled = true
+  stageActionForm.aiDevelopmentEnabled = true
   stageActionForm.projectGroup = ''
 }
 
@@ -1836,6 +2036,9 @@ async function submitStageAction() {
       occurredAt: stageActionForm.occurredAt || undefined,
       aiClarificationEnabled: stageActionForm.action === 'START_CLARIFICATION'
         ? stageActionForm.aiClarificationEnabled
+        : undefined,
+      aiDevelopmentEnabled: stageActionForm.action === 'CONFIRM_DESIGN'
+        ? stageActionForm.aiDevelopmentEnabled
         : undefined,
     }
     const detail = await advanceIntakeStage(stageActionRow.value.id, payload)
@@ -2715,7 +2918,7 @@ async function submitDetailAttachments(files: File[]) {
   try {
     const formData = new FormData()
     files.forEach((file) => formData.append('attachments', file))
-    selectedDetail.value = await appendIntakeAttachments(selectedDetail.value.id, formData)
+    selectedDetail.value = normalizeIntakeDetail(await appendIntakeAttachments(selectedDetail.value.id, formData))
     ElMessage.success('需求附件已更新')
     await loadIntakeRecords()
   } catch (error) {
@@ -2779,7 +2982,9 @@ async function replaceAttachmentFromDetail(item: IntakeAttachment, file: File) {
   try {
     const formData = new FormData()
     formData.append('file', file)
-    selectedDetail.value = await replaceIntakeAttachment(selectedDetail.value.id, item.id, formData)
+    selectedDetail.value = normalizeIntakeDetail(
+      await replaceIntakeAttachment(selectedDetail.value.id, item.id, formData),
+    )
     ElMessage.success('需求附件已替换')
     await loadIntakeRecords()
   } catch (error) {
@@ -2805,7 +3010,9 @@ async function deleteAttachmentFromDetail(item: IntakeAttachment) {
   }
   deletingAttachmentId.value = item.id
   try {
-    selectedDetail.value = await deleteIntakeAttachment(selectedDetail.value.id, item.id)
+    selectedDetail.value = normalizeIntakeDetail(
+      await deleteIntakeAttachment(selectedDetail.value.id, item.id),
+    )
     ElMessage.success('需求附件已删除')
     await loadIntakeRecords()
   } catch (error) {
@@ -2816,24 +3023,59 @@ async function deleteAttachmentFromDetail(item: IntakeAttachment) {
   }
 }
 
+async function showPreviewItem(item: IntakeAttachment) {
+  const blob = await downloadAttachment(item.id)
+  if (previewImageUrl.value) {
+    URL.revokeObjectURL(previewImageUrl.value)
+  }
+  previewImageUrl.value = URL.createObjectURL(blob)
+  previewImageName.value = item.fileName
+  previewContentType.value = item.contentType || blob.type || ''
+  previewVisible.value = true
+}
+
 async function previewAttachment(item: IntakeAttachment) {
   if (!item.previewable) {
     return
   }
   try {
-    if (previewImageUrl.value) {
-      URL.revokeObjectURL(previewImageUrl.value)
-    }
-    const blob = await downloadAttachment(item.id)
-    previewImageUrl.value = URL.createObjectURL(blob)
-    previewImageName.value = item.fileName
-    previewContentType.value = item.contentType || blob.type || ''
-    previewVisible.value = true
+    previewItems.value = []
+    await showPreviewItem(item)
   } catch (error) {
     ElMessage.error('预览附件失败')
     console.error(error)
   }
 }
+
+/** 预览待办截图：把同一待办的截图放进切换列表，可左右切换。 */
+async function previewTodoScreenshot(item: IntakeAttachment, siblings: IntakeAttachment[]) {
+  try {
+    await showPreviewItem(item)
+    previewIndex.value = siblings.findIndex((sibling) => sibling.id === item.id)
+    previewItems.value = siblings
+  } catch (error) {
+    ElMessage.error('预览截图失败')
+    console.error(error)
+  }
+}
+
+async function switchPreviewItem(step: number) {
+  const nextIndex = previewIndex.value + step
+  const item = previewItems.value[nextIndex]
+  if (!item) {
+    return
+  }
+  try {
+    await showPreviewItem(item)
+    previewIndex.value = nextIndex
+  } catch (error) {
+    ElMessage.error('预览截图失败')
+    console.error(error)
+  }
+}
+
+const canPreviewPrev = computed(() => previewIndex.value > 0)
+const canPreviewNext = computed(() => previewIndex.value < previewItems.value.length - 1)
 
 function previewLocalFile(file: File) {
   if (!canPreviewFile(file)) {
@@ -2856,6 +3098,8 @@ function closePreview() {
   }
   previewImageName.value = ''
   previewContentType.value = ''
+  previewItems.value = []
+  previewIndex.value = 0
 }
 
 function resolveSubmittedTime(row: IntakeSummary) {
@@ -3434,6 +3678,31 @@ watch(
   },
   { immediate: true },
 )
+
+// 待办截图缩略图只在「需求待办」页签激活时拉取；切换需求或关闭详情后，上一个需求的缩略图不再使用
+const todoThumbnailItems = computed(() =>
+  detailActiveTab.value === 'todos' ? detailTodos.value.flatMap((todo) => todo.screenshots) : [],
+)
+
+watch(todoThumbnailItems, (items) => items.forEach((item) => void loadTodoScreenshotUrl(item)), { immediate: true })
+
+watch(
+  () => (detailVisible.value ? selectedDetail.value?.id : null),
+  () => clearTodoScreenshotUrls(),
+)
+
+watch(todoFormVisible, (open) => {
+  if (open) {
+    document.addEventListener('paste', handleTodoPaste)
+  } else {
+    document.removeEventListener('paste', handleTodoPaste)
+  }
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('paste', handleTodoPaste)
+  clearTodoScreenshotUrls()
+})
 
 onMounted(loadBaseData)
 </script>
@@ -4069,6 +4338,20 @@ onMounted(loadBaseData)
             />
             <span class="ai-clarification-option__hint">
               {{ stageActionForm.aiClarificationEnabled ? '开始澄清后自动生成待确认项和风险项。' : '仅进入人工澄清，不自动生成 AI 澄清项。' }}
+            </span>
+          </div>
+        </el-form-item>
+      </template>
+      <template v-if="stageActionForm.action === 'CONFIRM_DESIGN' && stageActionRow?.requirementType === '研发需求'">
+        <el-form-item label="自动 AI 开发">
+          <div class="ai-clarification-option">
+            <el-switch
+              v-model="stageActionForm.aiDevelopmentEnabled"
+              active-text="启用"
+              inactive-text="不启用"
+            />
+            <span class="ai-clarification-option__hint">
+              {{ stageActionForm.aiDevelopmentEnabled ? '设计完成后由开发数字员工在研发分支自动开发并自测。' : '仅推进到开发中，由人工开发；可稍后在需求详情的 AI 分支开发区块手动启动。' }}
             </span>
           </div>
         </el-form-item>
@@ -5056,30 +5339,35 @@ onMounted(loadBaseData)
                     </div>
                   </template>
 
-                <div v-if="aiDevelopment" class="task-evaluation-section">
+                <div v-if="aiDevelopment || aiDevelopmentStartable" class="task-evaluation-section">
                   <div class="section-title section-title--actions">
                     <span>AI 分支开发</span>
                     <el-button
-                      v-if="canOperateStage && selectedDetail?.demandStatus === '开发中' && (aiDevelopment.executionStatus === 'FAILED' || (aiDevelopment.executionStatus === 'PENDING' && !aiDevelopment.agentTaskId))"
+                      v-if="aiDevelopment && canOperateStage && selectedDetail?.demandStatus === '开发中' && (aiDevelopment.executionStatus === 'FAILED' || (aiDevelopment.executionStatus === 'PENDING' && !aiDevelopment.agentTaskId))"
                       size="small" type="primary" plain :loading="retryingAiDevelopment" @click="retryAiDevelopmentAction"
-                    >重试</el-button>
+                      >重试</el-button>
+                    <el-button
+                      v-else-if="aiDevelopmentStartable"
+                      size="small" type="primary" plain :loading="retryingAiDevelopment" @click="retryAiDevelopmentAction"
+                      >启动 AI 开发</el-button>
                   </div>
                   <div class="task-evaluation-info-card">
                     <div class="task-metric-grid">
                       <div class="task-metric-card">
                         <div class="task-metric-label">执行状态</div>
-                        <div class="task-metric-value">{{ resolveAiDevelopmentStatusLabel(aiDevelopment.executionStatus) }}</div>
+                        <div class="task-metric-value">{{ aiDevelopment ? resolveAiDevelopmentStatusLabel(aiDevelopment.executionStatus) : '未启动' }}</div>
                       </div>
                       <div class="task-metric-card">
                         <div class="task-metric-label">研发分支</div>
-                        <div class="task-metric-value">{{ aiDevelopment.developmentBranch || '-' }}</div>
+                        <div class="task-metric-value">{{ aiDevelopment?.developmentBranch || selectedDetail?.structuredData?.developmentBranchName || '-' }}</div>
                       </div>
                       <div class="task-metric-card">
                         <div class="task-metric-label">Agent 任务</div>
-                        <div class="task-metric-value">{{ aiDevelopment.agentTaskId || '-' }}</div>
+                        <div class="task-metric-value">{{ aiDevelopment?.agentTaskId || '-' }}</div>
                       </div>
                     </div>
-                    <div v-if="aiDevelopment.executionMessage" class="muted-text">{{ aiDevelopment.executionMessage }}</div>
+                    <div v-if="aiDevelopment?.executionMessage" class="muted-text">{{ aiDevelopment.executionMessage }}</div>
+                    <div v-else-if="!aiDevelopment" class="muted-text">设计完成时选择了人工开发；如需 AI 接手，点击「启动 AI 开发」。</div>
                   </div>
                 </div>
 
@@ -5145,7 +5433,35 @@ onMounted(loadBaseData)
                   border
                   class="todo-table"
                 >
-                  <el-table-column prop="title" label="待办标题" min-width="180" show-overflow-tooltip />
+                  <el-table-column label="待办标题" min-width="180">
+                    <template #default="{ row }">
+                      <div class="todo-title-cell">
+                        <span class="todo-title-text" :title="row.title">{{ row.title }}</span>
+                        <div v-if="row.screenshots.length" class="todo-screenshot-list">
+                          <button
+                            v-for="item in splitTodoScreenshots(row.screenshots).visible"
+                            :key="item.id"
+                            type="button"
+                            class="todo-screenshot-thumb"
+                            :title="item.fileName"
+                            @click="previewTodoScreenshot(item, row.screenshots)"
+                          >
+                            <img v-if="todoScreenshotUrls.get(item.id)" :src="todoScreenshotUrls.get(item.id)" :alt="item.fileName" />
+                            <el-icon v-else><Picture /></el-icon>
+                          </button>
+                          <button
+                            v-if="splitTodoScreenshots(row.screenshots).hiddenCount"
+                            type="button"
+                            class="todo-screenshot-more"
+                            :title="`共 ${row.screenshots.length} 张截图`"
+                            @click="previewTodoScreenshot(row.screenshots[splitTodoScreenshots(row.screenshots).visible.length], row.screenshots)"
+                          >
+                            +{{ splitTodoScreenshots(row.screenshots).hiddenCount }}
+                          </button>
+                        </div>
+                      </div>
+                    </template>
+                  </el-table-column>
                   <el-table-column prop="content" label="内容" min-width="220" show-overflow-tooltip>
                     <template #default="{ row }">
                       {{ row.content || '-' }}
@@ -5363,9 +5679,32 @@ onMounted(loadBaseData)
   </el-dialog>
 
   <el-dialog v-model="previewVisible" :title="previewImageName || '附件预览'" width="960px" @closed="closePreview">
-    <img v-if="previewKind === 'image'" :src="previewImageUrl" class="preview-image" alt="附件预览" />
+    <div v-if="previewKind === 'image'" class="preview-stage">
+      <button
+        v-if="canPreviewPrev"
+        type="button"
+        class="preview-nav preview-nav--prev"
+        title="上一张"
+        @click="switchPreviewItem(-1)"
+      >
+        <el-icon><ArrowLeft /></el-icon>
+      </button>
+      <img :src="previewImageUrl" class="preview-image" alt="附件预览" />
+      <button
+        v-if="canPreviewNext"
+        type="button"
+        class="preview-nav preview-nav--next"
+        title="下一张"
+        @click="switchPreviewItem(1)"
+      >
+        <el-icon><ArrowRight /></el-icon>
+      </button>
+    </div>
     <iframe v-else-if="previewKind === 'pdf'" :src="previewImageUrl" class="preview-frame" title="附件预览" />
     <el-empty v-else description="当前文件暂不支持预览" />
+    <div v-if="previewKind === 'image' && previewItems.length > 1" class="preview-counter">
+      {{ previewIndex + 1 }} / {{ previewItems.length }}
+    </div>
   </el-dialog>
 
   <el-dialog v-model="businessLineDialogVisible" title="修改业务线" width="520px" @closed="resetBusinessLineDialog">
@@ -5439,6 +5778,30 @@ onMounted(loadBaseData)
           show-word-limit
           placeholder="补充处理背景、口径或交付要求"
         />
+      </el-form-item>
+      <el-form-item label="截图">
+        <label class="todo-screenshot-field" @dragover.prevent @drop.prevent="handleDroppedTodoScreenshots">
+          <input
+            class="todo-screenshot-input"
+            type="file"
+            accept="image/*"
+            multiple
+            @change="handleTodoScreenshotChange"
+          />
+          <div v-if="todoScreenshotDraft.length" class="todo-screenshot-strip">
+            <span v-for="item in todoScreenshotDraft" :key="item.key" class="todo-screenshot-item" :title="item.name">
+              <img v-if="item.url" :src="item.url" class="todo-screenshot-image" :alt="item.name" />
+              <el-icon v-else class="todo-screenshot-pending"><Loading /></el-icon>
+              <button type="button" class="todo-screenshot-remove" title="移除" @click.stop.prevent="removeTodoScreenshot(item)">
+                <el-icon><Close /></el-icon>
+              </button>
+            </span>
+          </div>
+          <span class="todo-screenshot-hint">
+            <el-icon><Plus /></el-icon>
+            点击选择、拖入或粘贴截图
+          </span>
+        </label>
       </el-form-item>
       <el-form-item label="处理人">
         <el-input v-model="todoForm.assigneeUserName" maxlength="64" placeholder="请输入处理人用户名" />
@@ -5715,6 +6078,159 @@ onMounted(loadBaseData)
 
 .todo-status-tag--active {
   font-weight: 700;
+}
+
+.todo-title-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.todo-title-text {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-screenshot-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+
+/* 4 格合计 36×4 + 3×3 = 153px，刚好排进 180px 标题列的内容区，不换行也不加宽列 */
+.todo-screenshot-thumb,
+.todo-screenshot-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+}
+
+.todo-screenshot-thumb {
+  overflow: hidden;
+  color: var(--el-text-color-placeholder);
+  cursor: zoom-in;
+}
+
+.todo-screenshot-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.todo-screenshot-thumb:hover,
+.todo-screenshot-more:hover {
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+}
+
+.todo-screenshot-more {
+  border-style: dashed;
+  cursor: pointer;
+}
+
+.todo-screenshot-field {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 76px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.todo-screenshot-field:hover,
+.todo-screenshot-field:focus-within {
+  border-color: var(--el-color-primary);
+}
+
+.todo-screenshot-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.todo-screenshot-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.todo-screenshot-item {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+  background: var(--el-fill-color-light);
+}
+
+.todo-screenshot-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.todo-screenshot-pending {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  color: var(--el-text-color-placeholder);
+  transform: translate(-50%, -50%);
+}
+
+.todo-screenshot-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0 0 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.todo-screenshot-remove:hover {
+  background: var(--el-color-danger);
+}
+
+.todo-screenshot-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 .copyable-detail-value {
@@ -6366,6 +6882,49 @@ onMounted(loadBaseData)
   max-height: 72vh;
   margin: 0 auto;
   object-fit: contain;
+}
+
+.preview-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-nav {
+  position: absolute;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 20px;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.preview-nav:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.preview-nav--prev {
+  left: 8px;
+}
+
+.preview-nav--next {
+  right: 8px;
+}
+
+.preview-counter {
+  margin-top: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  text-align: center;
 }
 
 .preview-frame {

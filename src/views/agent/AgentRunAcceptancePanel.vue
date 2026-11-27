@@ -36,7 +36,7 @@ onUnmounted(() => { active = false; clear() })
 
 <template>
   <section class="acceptance" v-if="canView" v-loading="loading">
-    <div class="heading"><p>按分派时要求的产物逐项核验。</p><el-button :disabled="loading" @click="load">重新核验</el-button></div>
+    <div class="heading"><p>按本轮运行要求的产物逐项核验。</p><el-button :disabled="loading" @click="load">重新核验</el-button></div>
     <p class="meta">这是当前证据复查，不会改写运行的历史结果。代码交付、实际测试、发布和效果验证分别验收。</p>
     <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
     <template v-if="view">

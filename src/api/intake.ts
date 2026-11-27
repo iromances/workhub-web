@@ -3,8 +3,8 @@ import type { ApiResponse, PageResponse } from '@/types/http'
 import type { DemandTypeFilter, DevelopmentAnalysisResponse, IntakeAiDevelopment, IntakeBoard, IntakeBoardGroupBy, IntakeBusinessLineUpdateRequest, IntakeClarificationAnalysisResponse, IntakeDashboard, IntakeDetail, IntakeRequirementFolder, IntakeStageActionRequest, IntakeSubmitTestReview, IntakeSummary, IntakeTodo, IntakeTodoCreateRequest, IntakeTodoStatusRequest, IntakeTodoUpdateRequest } from '@/types/work-item'
 
 import http from './http'
-export { buildIntakeTodoPath, buildIntakeTodoStatusPath, buildIntakeTodosPath } from './intakeTodoPaths'
-import { buildIntakeTodoPath, buildIntakeTodoStatusPath, buildIntakeTodosPath } from './intakeTodoPaths'
+export { buildIntakeTodoPath, buildIntakeTodoScreenshotsPath, buildIntakeTodoStatusPath, buildIntakeTodosPath } from './intakeTodoPaths'
+import { buildIntakeTodoPath, buildIntakeTodoScreenshotsPath, buildIntakeTodoStatusPath, buildIntakeTodosPath } from './intakeTodoPaths'
 
 export async function fetchIntakeRecords(params?: {
   status?: string
@@ -58,6 +58,18 @@ export async function updateIntakeTodo(id: number, todoId: number, request: Inta
 
 export async function updateIntakeTodoStatus(id: number, todoId: number, request: IntakeTodoStatusRequest): Promise<IntakeTodo> {
   const response = await http.post<ApiResponse<IntakeTodo>>(buildIntakeTodoStatusPath(id, todoId), request)
+  return response.data.data
+}
+
+export async function syncIntakeTodoScreenshots(
+  id: number,
+  todoId: number,
+  request: { files: File[]; removedIds: number[] },
+): Promise<IntakeTodo> {
+  const formData = new FormData()
+  request.files.forEach((file) => formData.append('files', file))
+  request.removedIds.forEach((attachmentId) => formData.append('removedIds', String(attachmentId)))
+  const response = await http.post<ApiResponse<IntakeTodo>>(buildIntakeTodoScreenshotsPath(id, todoId), formData)
   return response.data.data
 }
 

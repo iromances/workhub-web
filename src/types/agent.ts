@@ -55,12 +55,6 @@ export interface AgentTask {
   createdAt: string
   updatedAt: string
 }
-export interface AgentTaskCreate {
-  requestKey: string
-  specification: AgentTaskSpecification
-  schedule: AgentSchedule
-  runImmediately: boolean
-}
 export interface AgentRun {
   id: string
   taskId: string

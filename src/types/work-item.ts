@@ -557,6 +557,7 @@ export interface IntakeTodo {
   processResult: string | null
   createdAt: string
   updatedAt: string
+  screenshots: IntakeAttachment[]
 }
 
 export interface IntakeTodoCreateRequest {
@@ -606,6 +607,7 @@ export interface IntakeStageActionRequest {
   acceptanceTime?: string
   occurredAt?: string
   aiClarificationEnabled?: boolean
+  aiDevelopmentEnabled?: boolean
   closeReason?: string
 }
 
