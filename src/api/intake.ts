@@ -6,6 +6,11 @@ import http from './http'
 export { buildIntakeTodoPath, buildIntakeTodoScreenshotsPath, buildIntakeTodoStatusPath, buildIntakeTodosPath } from './intakeTodoPaths'
 import { buildIntakeTodoPath, buildIntakeTodoScreenshotsPath, buildIntakeTodoStatusPath, buildIntakeTodosPath } from './intakeTodoPaths'
 
+export async function fetchDesktopCapabilities(): Promise<{ openFolderEnabled: boolean }> {
+  const response = await http.get<ApiResponse<{ openFolderEnabled: boolean }>>('/intake/desktop-capabilities')
+  return response.data.data
+}
+
 export async function fetchIntakeRecords(params?: {
   status?: string
   requirementName?: string

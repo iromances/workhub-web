@@ -34,6 +34,7 @@ import {
   generateIntakeSqlDraft,
   openIntakeDevelopmentPlanFolder,
   openIntakeRequirementFolder,
+  fetchDesktopCapabilities,
   pauseIntakeDemand,
   replyClarificationItem,
   replaceIntakeAttachment,
@@ -65,6 +66,7 @@ import {
   countActiveIntakeTodos,
   formatActiveTodoLabel,
   formatTodoTabLabel,
+  hasTodoFieldChanges,
   isActiveIntakeTodoStatus,
   pickPastedTodoScreenshots,
   pickTodoScreenshotFiles,
@@ -176,6 +178,8 @@ const todoScreenshotFiles = ref<File[]>([])
 const todoScreenshotLocalUrls = reactive(new Map<string, string>())
 // 新增待办已创建但截图上传失败时记住待办 ID，重试不重复新增
 const todoFormCreatedTodoId = ref<number | null>(null)
+// 保存成功后置位：弹框关闭动画期间再点保存不再重复提交
+const todoFormSaved = ref(false)
 const developmentAnalysis = ref<DevelopmentAnalysisResponse | null>(null)
 const developmentHistory = ref<DevelopmentAnalysisResponse[]>([])
 const developmentRoundDialogVisible = ref(false)
@@ -342,8 +346,9 @@ const canCreateRecord = computed(() => authStore.hasPermission('intake:record:cr
 const canViewDetail = computed(() => authStore.hasPermission('intake:record:detail'))
 const canCopyCollaboration = computed(() => authStore.hasPermission('intake:collaboration:copy'))
 const canOpenZentao = computed(() => authStore.hasPermission('intake:zentao:open'))
-const canOpenRequirementFolder = computed(() => authStore.hasPermission('intake:requirement-folder:open'))
-const canOpenDevelopmentPlanFolder = computed(() => authStore.hasPermission('intake:development-plan-folder:open'))
+const openFolderEnabled = ref(false)
+const canOpenRequirementFolder = computed(() => openFolderEnabled.value && authStore.hasPermission('intake:requirement-folder:open'))
+const canOpenDevelopmentPlanFolder = computed(() => openFolderEnabled.value && authStore.hasPermission('intake:development-plan-folder:open'))
 const canDeleteRecord = computed(() => authStore.hasPermission('intake:record:delete'))
 const canOperateStage = computed(() => authStore.hasPermission('intake:stage:operate'))
 const canOperateAi = computed(() => authStore.hasPermission('intake:ai:operate'))
@@ -610,6 +615,7 @@ function openCreateTodoDialog() {
   todoForm.assigneeUserName = authStore.userName || ''
   todoForm.plannedAt = ''
   todoFormCreatedTodoId.value = null
+  todoFormSaved.value = false
   resetTodoScreenshotDraft([])
   todoFormVisible.value = true
 }
@@ -622,6 +628,7 @@ function openEditTodoDialog(todo: IntakeTodo) {
   todoForm.assigneeUserName = todo.assigneeUserName || ''
   todoForm.plannedAt = normalizePickerDateTimeValue(todo.plannedAt)
   todoFormCreatedTodoId.value = null
+  todoFormSaved.value = false
   resetTodoScreenshotDraft(todo.screenshots)
   todoFormVisible.value = true
 }
@@ -634,12 +641,14 @@ function resetTodoFormDialog() {
   todoForm.plannedAt = ''
   todoFormMode.value = 'create'
   todoFormCreatedTodoId.value = null
+  todoFormSaved.value = false
   resetTodoScreenshotDraft([])
 }
 
 /** 先保存待办字段，再提交截图变更；截图失败时保留弹框内容，重试不会重复新增待办。 */
 async function submitTodoForm() {
-  if (!selectedDetail.value) {
+  // 提交中或已保存后直接返回：按钮的加载态要到下一次渲染才生效，不依赖它来防重复提交
+  if (!selectedDetail.value || todoFormSubmitting.value || todoFormSaved.value) {
     return
   }
   const validationMessage = validateIntakeTodoEditableForm(todoForm)
@@ -660,7 +669,10 @@ async function submitTodoForm() {
   try {
     let todoId: number
     if (isEdit && editingTodo.value) {
-      await updateIntakeTodo(intakeId, editingTodo.value.id, payload)
+      // 只改截图、可编辑字段没变时不提交字段更新，避免留下“未发生字段变化”的历史
+      if (hasTodoFieldChanges(editingTodo.value, payload)) {
+        await updateIntakeTodo(intakeId, editingTodo.value.id, payload)
+      }
       todoId = editingTodo.value.id
     } else if (todoFormCreatedTodoId.value === null) {
       todoId = (await createIntakeTodo(intakeId, payload)).id
@@ -691,6 +703,7 @@ async function submitTodoForm() {
   } finally {
     todoFormSubmitting.value = false
   }
+  todoFormSaved.value = true
   todoFormVisible.value = false
   ElMessage.success(isEdit ? '待办已更新' : '待办已新增')
   await refreshDetailQuietly(intakeId, '保存成功，但详情刷新失败，请重新打开详情')
@@ -3704,6 +3717,13 @@ onBeforeUnmount(() => {
   clearTodoScreenshotUrls()
 })
 
+onMounted(async () => {
+  try {
+    openFolderEnabled.value = (await fetchDesktopCapabilities()).openFolderEnabled === true
+  } catch {
+    openFolderEnabled.value = false
+  }
+})
 onMounted(loadBaseData)
 </script>
 

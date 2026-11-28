@@ -107,3 +107,25 @@ export function resolveTodoScreenshotChange(
     files: newFiles,
   }
 }
+
+export interface IntakeTodoEditableLike {
+  title: string | null
+  content: string | null
+  assigneeUserName: string | null
+  plannedAt: string | null
+}
+
+export interface IntakeTodoEditablePayload {
+  title: string
+  content: string | null
+  assigneeUserName: string | null
+  plannedAt: string | null
+}
+
+/** 编辑待办时可编辑字段是否有变化；没有变化时不提交字段更新，避免留下“未发生字段变化”的历史。 */
+export function hasTodoFieldChanges(todo: IntakeTodoEditableLike, payload: IntakeTodoEditablePayload) {
+  return (todo.title || '') !== payload.title
+    || (todo.content || null) !== payload.content
+    || (todo.assigneeUserName || null) !== payload.assigneeUserName
+    || (todo.plannedAt || null) !== (payload.plannedAt || null)
+}

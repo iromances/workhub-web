@@ -9,6 +9,7 @@ import {
   countActiveIntakeTodos,
   formatActiveTodoLabel,
   formatTodoTabLabel,
+  hasTodoFieldChanges,
   pickPastedTodoScreenshots,
   pickTodoScreenshotFiles,
   resolveTodoScreenshotChange,
@@ -113,6 +114,15 @@ assert(
   '超过 4 张时展示前 3 张，「+N」收起其余数量',
 )
 assert(splitTodoScreenshots(shots(5)).hiddenCount === 2, '刚好超出 1 张时同样收起到「+N」')
+
+const savedTodo = { title: '确认方案', content: null, assigneeUserName: 'shihao', plannedAt: '2026-06-05T10:00:00' }
+const samePayload = { ...savedTodo }
+assert(hasTodoFieldChanges(savedTodo, samePayload) === false, '可编辑字段都没变时不提交字段更新')
+assert(hasTodoFieldChanges({ ...savedTodo, content: '' }, samePayload) === false, '空字符串与空值视为相同')
+assert(hasTodoFieldChanges(savedTodo, { ...samePayload, title: '确认方案（更新）' }) === true, '标题变化时提交字段更新')
+assert(hasTodoFieldChanges(savedTodo, { ...samePayload, content: '补充说明' }) === true, '内容变化时提交字段更新')
+assert(hasTodoFieldChanges(savedTodo, { ...samePayload, assigneeUserName: null }) === true, '处理人变化时提交字段更新')
+assert(hasTodoFieldChanges(savedTodo, { ...samePayload, plannedAt: null }) === true, '计划处理时间变化时提交字段更新')
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
